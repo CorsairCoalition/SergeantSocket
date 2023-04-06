@@ -2,14 +2,16 @@
 import { Command } from 'commander'
 import { createClient } from 'redis'
 import io from 'socket.io-client'
+import { GameState } from './gameState.js'
+import { later, random } from './utils.js'
 
+import crypto from 'crypto'
 import fs from 'node:fs/promises'
 
 // configuration
 
 const BOT_CLASS = 'cortex'
 const GAME_SERVER_URL = 'wss://botws.generals.io/'
-const DEFAULT_NUMBER_OF_GAMES = 3
 const DEFAULT_CUSTOM_GAME_SPEED = 4
 
 const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'))
@@ -18,7 +20,7 @@ const gameConfig = config.gameConfig
 const redisConfig = config.redisConfig
 
 // create a unique botId by hashing gameConfig.userId
-gameConfig.botId = require('crypto').createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
+gameConfig.botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
 gameConfig.customGameSpeed = gameConfig.customGameSpeed || DEFAULT_CUSTOM_GAME_SPEED
 const REDIS_CHANNEL = {
 	COMMAND: BOT_CLASS + '-' + gameConfig.botId + '-command',
@@ -28,16 +30,6 @@ const REDIS_CHANNEL = {
 }
 
 // utilities and program flow
-
-function later(delay: number) {
-	return new Promise(function (resolve) {
-		setTimeout(resolve, delay)
-	})
-}
-
-function random(min: number, max: number) {
-	return Math.floor(Math.random() * (max - min + 1) + min)
-}
 
 interface Log {
 	stdout: (msg: string) => void,
@@ -50,38 +42,34 @@ const log: Log = {
 	stdout: (msg: string) => console.log(new Date().toISOString(), msg),
 	stderr: (msg: string) => console.error(new Date().toISOString(), msg),
 	debug: (msg: string) => { if (options.debug) console.error(new Date().toISOString(), msg) },
-	redis: (msg: string) => redisClient.publish(REDIS_CHANNEL.STATE, msg),
+	redis: (msg: string) => redisPublisher.publish(REDIS_CHANNEL.STATE, msg),
 }
 
 process.once('SIGINT', async (code) => {
 	log.stderr('Interrupted. Exiting gracefully.')
-	if (gameState === GameState.PLAYING || gameState === GameState.JOINED_LOBBY) {
+	if (gamePhase === GamePhase.PLAYING || gamePhase === GamePhase.JOINED_LOBBY) {
 		await socket.emit('leave_game')
 		log.debug('sent: leave_game')
 	}
 	await socket.disconnect()
 	redisClient.quit()
+	redisPublisher.quit()
 })
 
 process.once('SIGTERM', async (code) => {
 	log.stderr('Terminated. Exiting gracefully.')
-	if (gameState === GameState.PLAYING || gameState === GameState.JOINED_LOBBY) {
+	if (gamePhase === GamePhase.PLAYING || gamePhase === GamePhase.JOINED_LOBBY) {
 		socket.emit('leave_game')
 		log.debug('sent: leave_game')
 	}
 	await socket.disconnect()
 	redisClient.quit()
+	redisPublisher.quit()
 })
 
 // data structures and definitions
 
-const enum GameType {
-	FFA,
-	OneVsOne,
-	Custom
-}
-
-const enum GameState {
+const enum GamePhase {
 	INITIALIZING,
 	CONNECTED,
 	JOINED_LOBBY,
@@ -89,7 +77,8 @@ const enum GameState {
 }
 
 // TODO: get rid of global variables
-let gameState: GameState = GameState.INITIALIZING
+let gamePhase: GamePhase = GamePhase.INITIALIZING
+let gameState: GameState
 let playerIndex: number
 let replay_id: string = ""
 let usernames: string[]
@@ -111,6 +100,16 @@ const redisClient = createClient({
 })
 redisClient.on('error', (error: Error) => console.error('[Redis]', error))
 redisClient.connect()
+
+const redisPublisher = createClient({
+	url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
+	socket: {
+		tls: true,
+		servername: redisConfig.HOST,
+	}
+})
+redisPublisher.on('error', (error: Error) => console.error('[Redis]', error))
+redisPublisher.connect()
 
 // TODO: deconflict with Redis pub/sub to ensure globally unique botId
 
@@ -151,17 +150,13 @@ log.debug(options.toString())
 
 redisClient.subscribe(REDIS_CHANNEL.COMMAND, (message: string, channel: string) => {
 
-	// use commands to join / leave games
-	// allow setting game options
-	// Commands:
-	// - play - ffa / 1v1 / custom
-	// - leave
-	// - set game options
-
+	// control game: join / leave / options
 
 	let msgObj: {
 		game_start?: { replay_id: string }
 		join?: { gameType: string, gameId?: string }
+		leave?: boolean
+		options?: { customGameSpeed?: number }
 	}
 	let gameType, gameId: string
 
@@ -178,7 +173,7 @@ redisClient.subscribe(REDIS_CHANNEL.COMMAND, (message: string, channel: string) 
 	}
 
 	if ('leave' in msgObj) {
-		if (gameState === GameState.PLAYING || gameState === GameState.JOINED_LOBBY) {
+		if (gamePhase === GamePhase.PLAYING || gamePhase === GamePhase.JOINED_LOBBY) {
 			leaveGame()
 		} else {
 			log.stderr(`[leave] not in a game`)
@@ -187,9 +182,15 @@ redisClient.subscribe(REDIS_CHANNEL.COMMAND, (message: string, channel: string) 
 	}
 
 	if ('options' in msgObj) {
-		if (gameState === GameState.JOINED_LOBBY) {
+		// if options.customGameSpeed is not defined then do nothing
+		if (!options.customGameSpeed) return
+
+		gameConfig.customGameSpeed = options.customGameSpeed
+		if (gamePhase === GamePhase.JOINED_LOBBY) {
 			customOptionsSet = false
-			setTimeout(setCustomOptions, 100)
+			later(100).then(() => {
+				setCustomOptions(gameConfig.customGameSpeed)
+			})
 		} else {
 			log.stderr(`[options] not in lobby`)
 		}
@@ -197,14 +198,19 @@ redisClient.subscribe(REDIS_CHANNEL.COMMAND, (message: string, channel: string) 
 	}
 })
 
-redisClient.subscribe(REDIS_CHANNEL.ACTION, (message: string, channel: string) => {
+// TODO: is this required if strategy module is making the final determination?
+// redisClient.subscribe(REDIS_CHANNEL.ACTION, (message: string, channel: string) => {
 	// store actions for comparison
 	// select the best action and execute
-})
+// })
 
 redisClient.subscribe(REDIS_CHANNEL.RECOMMENDATION, (message: string, channel: string) => {
-	// receive strategy scores and recommendations
-	// use strategy weights to make the best decision
+	// receive strategy module decision
+	// TODO: push action to the game
+	if (gamePhase !== GamePhase.PLAYING) {
+		log.stderr(`[recommendation] not in game`)
+		return
+	}
 })
 
 socket.on('connect', async () => {
@@ -245,6 +251,8 @@ socket.on('game_start', (data: { playerIndex: number; replay_id: string; usernam
 	log.stdout(`[game_start] replay: ${replay_id}, users: ${usernames}`)
 	log.redis('game_start ' + replay_id)
 
+	gameState = new GameState(data)
+
 	// iterate over gameConfig.warCry to send chat messages
 	// send messages at random intervals to appear more human
 	for (let i = 0; i < gameConfig.warCry.length; i++) {
@@ -254,11 +262,12 @@ socket.on('game_start', (data: { playerIndex: number; replay_id: string; usernam
 		})
 	}
 
-	gameState = GameState.PLAYING
+	gamePhase = GamePhase.PLAYING
 })
 
 socket.on('game_update', (data: object) => {
-	// TODO: update the local game state
+	// update the local game state
+	gameState.update(data)
 	// TODO: publish the new state to redis
 	// TODO: if number of rounds > n * 1000, leave the game
 })
@@ -286,7 +295,9 @@ socket.on('queue_update', (data) => {
 		&& data.numPlayers != queueNumPlayers
 		&& data.options.game_speed != gameConfig.customGameSpeed) {
 		customOptionsSet = false
-		setTimeout(setCustomOptions, 100)
+		later(100).then(() => {
+			setCustomOptions(gameConfig.customGameSpeed)
+		})
 	}
 	queueNumPlayers = data.numPlayers
 })
@@ -314,13 +325,13 @@ function joinGame(data: { gameType: string, gameId?: string }) {
 			log.stderr(`[command] invalid gameType: ${data.gameType}`)
 			return
 	}
-	gameState = GameState.JOINED_LOBBY
+	gamePhase = GamePhase.JOINED_LOBBY
 }
 
 function leaveGame() {
 	socket.emit('leave_game')
 	log.debug('sent: leave_game')
-	gameState = GameState.CONNECTED
+	gamePhase = GamePhase.CONNECTED
 	forceStartSet = false
 	customOptionsSet = false
 }
@@ -335,7 +346,7 @@ function setForceStart() {
 }
 
 // TODO: only call this function for gameType = custom
-function setCustomOptions() {
+function setCustomOptions(customGameSpeed: number) {
 	// use mutex to ensure that we only set custom options once
 	if (!customOptionsSet) {
 		customOptionsSet = true
