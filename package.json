@@ -6,6 +6,7 @@
   "type": "module",
   "dependencies": {
     "code42day-binary-heap": "^2.2.0",
+    "commander": "^10.0.0",
     "redis": "^4.6.5",
     "socket.io-client": "^2.5.0",
     "tinyqueue": "^2.0.3"
@@ -17,7 +18,7 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "start": "node app.js"
+    "start": "node out/app.js"
   },
   "repository": {
     "type": "git",
