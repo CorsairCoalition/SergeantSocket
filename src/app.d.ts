@@ -77,10 +77,21 @@ declare namespace GeneralsIO {
 
 declare namespace RedisData {
 
-	interface Command {
-		join?: { gameType: string, gameId?: string }
-		leave?: boolean
-		options?: { customGameSpeed?: number }
+	declare namespace Command {
+		interface Join {
+			gameType: string
+			gameId?: string
+		}
+
+		interface Options {
+			customGameSpeed?: number
+		}
+
+		interface Any {
+			join?: Join
+			leave?: boolean
+			options?: Options
+		}
 	}
 
 	interface Recommendation {
@@ -101,5 +112,23 @@ declare namespace RedisData {
 			gameId?: string
 		}
 		left?: boolean
+	}
+}
+
+declare namespace Config {
+	interface Game {
+		userId: string
+		username: string
+		customGameId: string
+		customGameSpeed: number
+		warCry: string[]
+	}
+
+	interface Redis {
+		HOST: string
+		PORT: number
+		USERNAME: string
+		PASSWORD: string
+		CHANNEL_PREFIX: string
 	}
 }

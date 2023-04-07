@@ -21,8 +21,9 @@ const gameConfig = config.gameConfig
 const redisConfig = config.redisConfig
 
 // create a unique botId by hashing gameConfig.userId
-gameConfig.botClass = 'cortex'
-gameConfig.botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
+const BOT_CLASS = 'cortex'
+let botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
+redisConfig.CHANNEL_PREFIX = BOT_CLASS + '-' + botId + '-'
 gameConfig.customGameSpeed = gameConfig.customGameSpeed || DEFAULT_CUSTOM_GAME_SPEED
 
 
@@ -61,7 +62,7 @@ let customOptionsSet: boolean = false
 
 // redis setup
 
-let redis = new Redis(redisConfig, gameConfig)
+let redis = new Redis(redisConfig)
 
 // TODO: deconflict with Redis pub/sub to ensure globally unique botId
 
@@ -93,7 +94,7 @@ Log.setDebugOutput(options.debug)
 let log = Log
 
 log.stdout(`[initilizing] ${pkg.name} v${pkg.version}`)
-log.stdout(`[initilizing] botId: ${gameConfig.botId}`)
+log.stdout(`[initilizing] botId: ${botId}`)
 
 log.debug("[debug] debugging enabled")
 log.debug("[debug] gameConfig: ")
@@ -103,7 +104,7 @@ log.debug(options.toString())
 
 // handle game events
 
-redis.subscribeToCommands((command: RedisData.Command) => {
+redis.subscribeToCommands((command: RedisData.Command.Any) => {
 
 	// control game: join / leave / options
 
@@ -136,6 +137,8 @@ redis.subscribeToCommands((command: RedisData.Command) => {
 		}
 		return
 	}
+}).then((gameKeyspace: string) => {
+	log.stdout('[Redis] subscribed: ' + gameKeyspace)
 })
 
 redis.subscribeToRecommendations((data: RedisData.Recommendation) => {
@@ -182,7 +185,7 @@ socket.on('game_start', (data: GeneralsIO.GameStart) => {
 	replay_id = data.replay_id
 	initialized = false
 
-	log.stdout(`[game_start] replay: ${replay_id}, users: ${usernames}`)
+	log.stdout(`[game_start] replay: ${replay_id}, users: ${data.usernames}`)
 	redis.sendUpdate({ game_start: data })
 
 	gameState = new GameState(data)
@@ -206,7 +209,7 @@ socket.on('game_update', (data: GeneralsIO.GameUpdate) => {
 	redis.sendUpdate({ game_update: data })
 	gameState.update(data)
 	redis.sendUpdate({ game_state: gameState })
-	redis.setKeys(gameState)
+	redis.updateGameData(gameState)
 
 	// TODO: publish the new state to redis
 	// TODO: if number of rounds > n * 1000, leave the game
@@ -240,8 +243,8 @@ socket.on('queue_update', (data: GeneralsIO.QueueUpdate) => {
 		setTimeout(setForceStart, 1000)
 	}
 	// if we are the first player in the queue and number of players has changed, set the game speed
-	// if (gameType === GameType.Custom
-	if (data.usernames[0] === gameConfig.username
+	if (gameType === Game.Type.CUSTOM
+		&& data.usernames[0] === gameConfig.username
 		&& data.numPlayers != queueNumPlayers
 		&& data.options.game_speed != gameConfig.customGameSpeed) {
 		customOptionsSet = false
@@ -252,7 +255,8 @@ socket.on('queue_update', (data: GeneralsIO.QueueUpdate) => {
 	queueNumPlayers = data.numPlayers
 })
 
-function joinGame(data: { gameType: string, gameId?: string }) {
+function joinGame(data: RedisData.Command.Join) {
+	gameType = data.gameType as Game.Type
 	switch (data.gameType) {
 		case Game.Type.FFA:
 			socket.emit('play', gameConfig.userId)
@@ -264,6 +268,9 @@ function joinGame(data: { gameType: string, gameId?: string }) {
 			log.stdout('[joined] 1v1')
 			break
 		case Game.Type.CUSTOM:
+			if (data.gameId) {
+				gameConfig.customGameId = data.gameId
+			}
 			socket.emit('join_private', data.gameId, gameConfig.userId)
 			setTimeout(setCustomOptions, 100)
 			setTimeout(setForceStart, 2000)
@@ -273,7 +280,7 @@ function joinGame(data: { gameType: string, gameId?: string }) {
 			log.stderr(`[join] invalid gameType: ${data.gameType}`)
 			return
 	}
-	redis.sendUpdate({joined: data})
+	redis.sendUpdate({ joined: data })
 	gamePhase = Game.Phase.JOINED_LOBBY
 }
 
@@ -288,7 +295,7 @@ function leaveGame() {
 		log.stderr(`[leaveGame] Invalid Request, Current State: ${gamePhase}`)
 		return
 	}
-	redis.sendUpdate({left: true})
+	redis.sendUpdate({ left: true })
 	gamePhase = Game.Phase.CONNECTED
 	forceStartSet = false
 	customOptionsSet = false
