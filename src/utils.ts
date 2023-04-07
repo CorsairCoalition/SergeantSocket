@@ -1,28 +1,9 @@
-/* Returns a new array created by patching the diff into the old array.
- * The diff formatted with alternating matching and mismatching segments:
- * <Number of matching elements>
- * <Number of mismatching elements>
- * <The mismatching elements>
- * ... repeated until the end of diff.
- * Example 1: patching a diff of [1, 1, 3] onto [0, 0] yields [0, 3].
- * Example 2: patching a diff of [0, 1, 2, 1] onto [0, 0] yields [2, 0].
- */
-export function patch(old: number[], diff: number[]) {
-	let out = [];
-	let i = 0;
-	while (i < diff.length) {
-		if (diff[i]) {  // matching
-			Array.prototype.push.apply(out, old.slice(out.length, out.length + diff[i]));
-		}
-		i++;
-		if (i < diff.length && diff[i]) {  // mismatching
-			Array.prototype.push.apply(out, diff.slice(i + 1, i + 1 + diff[i]));
-			i += diff[i];
-		}
-		i++;
-	}
-	return out;
-}
+// interface Log {
+// 	stdout: (msg: string) => void,
+// 	stderr: (msg: string) => void,
+// 	debug: (msg: string) => void,
+// 	redis: (channel: REDIS_CHANNEL, msgObj: object) => void,
+// }
 
 export function later(delay: number) {
 	return new Promise(function (resolve) {
@@ -32,4 +13,27 @@ export function later(delay: number) {
 
 export function random(min: number, max: number) {
 	return Math.floor(Math.random() * (max - min + 1) + min)
+}
+
+export class Log {
+
+	static debugEnabled: boolean = false
+
+	static setDebugOutput(debug: boolean) {
+		Log.debugEnabled = debug
+	}
+
+	static stdout (msg: string) {
+		console.log(new Date().toISOString(), msg)
+	}
+
+	static stderr (msg: string) {
+		console.error(new Date().toISOString(), msg)
+	}
+
+	static debug(msg: string) {
+		if (Log.debugEnabled)
+			console.error(new Date().toISOString(), msg)
+	}
+
 }

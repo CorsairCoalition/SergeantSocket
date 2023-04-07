@@ -1,4 +1,6 @@
-import { patch } from './utils.js'
+/// <reference path="./app.d.ts" />
+
+import { patch } from './gameUtils.js'
 
 export class GameState {
 	cities = []
@@ -18,16 +20,13 @@ export class GameState {
 	size: number
 	initialized: boolean = false
 
-	// socket.on('game_start', (data: { playerIndex: number; replay_id: string; chat_room: string; team_chat_room: string; usernames: string[]; teams: number[] }) => {
-	// socket.on('game_update', (data: { turn: number; map_diff: number[]; cities_diff: number[]; generals: number[]; scores: object[]; stars: float[] }) => {
-
-	constructor(data: { playerIndex: number; replay_id: string; usernames: string[]; chat_room: string; }) {
+	constructor(data: GeneralsIO.GameStart) {
 		this.playerIndex = data.playerIndex
 		this.replay_id = data.replay_id
 		this.usernames = data.usernames
 	}
 
-	update(data) {
+	update(data: GeneralsIO.GameUpdate) {
 		this.cities = patch(this.cities, data.cities_diff)
 		this.map = patch(this.map, data.map_diff)
 		this.turn = data.turn
