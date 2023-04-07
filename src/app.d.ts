@@ -90,6 +90,7 @@ declare namespace RedisData {
 		interface Any {
 			join?: Join
 			leave?: boolean
+			forceStart?: boolean
 			options?: Options
 		}
 	}
@@ -117,8 +118,12 @@ declare namespace RedisData {
 
 declare namespace Config {
 	interface Game {
+		BOT_CLASS: string
+		GAME_SERVER_URL: string
+		MAX_TURNS: number
 		userId: string
 		username: string
+		setUsername: boolean
 		customGameId: string
 		customGameSpeed: number
 		warCry: string[]
