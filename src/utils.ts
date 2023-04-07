@@ -16,17 +16,22 @@ export class Log {
 		Log.debugEnabled = debug
 	}
 
-	static stdout (...args: string[]) {
+	static stdout(...args: string[]) {
 		console.log(new Date().toISOString(), args.join(' '))
 	}
 
-	static stderr (...args: string[]) {
+	static stderr(...args: string[]) {
 		console.error(new Date().toISOString(), args.join(' '))
 	}
 
 	static debug(...args: string[]) {
-		if (Log.debugEnabled)
-			console.error(new Date().toISOString(), args.join(' '))
+		if (!Log.debugEnabled) return
+		console.error(new Date().toISOString(), args.join(' '))
+	}
+
+	static debugObject(obj: any) {
+		if (!Log.debugEnabled) return
+		console.error(JSON.stringify(obj, null, 2))
 	}
 
 }

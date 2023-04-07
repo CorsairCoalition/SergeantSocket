@@ -1,323 +1,300 @@
 /// <reference path="./app.d.ts" />
 
-// imports
-import { Command } from 'commander'
 import io from 'socket.io-client'
 import { GameState } from './gameState.js'
 import { Log, later, random } from './utils.js'
 import { Redis } from './redis.js'
-
 import crypto from 'crypto'
-import fs from 'node:fs/promises'
 
-// configuration
+export class App {
+	public botId: string
+	private gamePhase: Game.Phase = Game.Phase.INITIALIZING
+	private gameType: Game.Type
+	private gameState: GameState
+	private replay_id: string = ""
+	private usernames: string[]
+	private queueNumPlayers: number = 0
+	private forceStartSet: boolean = false
+	private customOptionsSet: boolean = false
+	private redis: Redis
+	private gameConfig: Config.Game
+	private initialized: boolean = false
+	private socket: any
 
-const GAME_SERVER_URL = 'wss://botws.generals.io/'
-const DEFAULT_CUSTOM_GAME_SPEED = 4
+	constructor(gameConfig: Config.Game, redisConfig: Config.Redis) {
+		// create a unique botId by hashing gameConfig.userId
+		this.botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
+		redisConfig.CHANNEL_PREFIX = gameConfig.BOT_CLASS + '-' + this.botId + '-'
+		this.gameConfig = gameConfig
 
-const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'))
-const config = JSON.parse(await fs.readFile('config.json', 'utf8'))
-const gameConfig = config.gameConfig
-const redisConfig = config.redisConfig
+		this.initializeSocketConnection()
+		this.initializeRedisConnection(redisConfig).then(() => {
+			this.redis.deconflict()
+		})
 
-// create a unique botId by hashing gameConfig.userId
-const BOT_CLASS = 'cortex'
-let botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
-redisConfig.CHANNEL_PREFIX = BOT_CLASS + '-' + botId + '-'
-gameConfig.customGameSpeed = gameConfig.customGameSpeed || DEFAULT_CUSTOM_GAME_SPEED
-
-
-// utilities and program flow
-
-process.once('SIGINT', async (code) => {
-	log.stderr('Interrupted. Exiting gracefully.')
-	if (gamePhase === Game.Phase.PLAYING || gamePhase === Game.Phase.JOINED_LOBBY) {
-		await socket.emit('leave_game')
-		log.debug('sent: leave_game')
-	}
-	await socket.disconnect()
-	redis.quit()
-})
-
-process.once('SIGTERM', async (code) => {
-	log.stderr('Terminated. Exiting gracefully.')
-	if (gamePhase === Game.Phase.PLAYING || gamePhase === Game.Phase.JOINED_LOBBY) {
-		socket.emit('leave_game')
-		log.debug('sent: leave_game')
-	}
-	await socket.disconnect()
-	redis.quit()
-})
-
-let gamePhase: Game.Phase = Game.Phase.INITIALIZING
-let gameType: Game.Type
-let gameState: GameState
-let replay_id: string = ""
-let usernames: string[]
-let queueNumPlayers: number = 0
-
-// mutex variables
-let forceStartSet: boolean = false
-let customOptionsSet: boolean = false
-
-// redis setup
-
-let redis = new Redis(redisConfig)
-
-// TODO: deconflict with Redis pub/sub to ensure globally unique botId
-
-// socket.io setup
-
-let socket = io(GAME_SERVER_URL, {
-	rejectUnauthorized: false,
-	transports: ['websocket']
-})
-
-socket.on("error", (error: Error) => log.stderr(`[socket.io] {error}`))
-socket.on("connect_error", (error: Error) => log.stderr(`[socket.io] {error}`))
-
-// parse commands and options
-
-const program = new Command()
-program
-	.name(pkg.name)
-	.version(pkg.version)
-	.description(pkg.description)
-	.option('-d, --debug', 'enable debugging', false)
-	.option('-s, --set-username', `attempt to set username: ${gameConfig.username}`, false)
-	.showHelpAfterError()
-
-program.parse()
-const options = program.opts()
-
-Log.setDebugOutput(options.debug)
-let log = Log
-
-log.stdout(`[initilizing] ${pkg.name} v${pkg.version}`)
-log.stdout(`[initilizing] botId: ${botId}`)
-
-log.debug("[debug] debugging enabled")
-log.debug("[debug] gameConfig: ")
-log.debug(gameConfig)
-log.debug("[debug] options: ")
-log.debug(options.toString())
-
-// handle game events
-
-redis.subscribeToCommands((command: RedisData.Command.Any) => {
-
-	// control game: join / leave / options
-
-	if (command.join) {
-		joinGame(command.join)
-		return
 	}
 
-	if (command.leave) {
-		if (gamePhase === Game.Phase.PLAYING || gamePhase === Game.Phase.JOINED_LOBBY) {
-			leaveGame()
-		} else {
-			log.stderr(`[leave] not in a game`)
-		}
-		return
+	private initializeSocketConnection = () => {
+		this.socket = io(this.gameConfig.GAME_SERVER_URL, {
+			rejectUnauthorized: false,
+			transports: ['websocket']
+		})
+		this.socket.on('connect', this.handleConnect)
+		this.socket.on("error", (error: Error) => Log.stderr(`[socket.io] {error}`))
+		this.socket.on("connect_error", (error: Error) => Log.stderr(`[socket.io] {error}`))
+		this.socket.on('error_set_username', this.handleErrorSetUsername)
+		this.socket.on('queue_update', this.handleQueueUpdate)
+		this.socket.on('game_start', this.handleGameStart)
+		this.socket.on('game_won', this.handleGameWon)
+		this.socket.on('game_lost', this.handleGameLost)
+		this.socket.on('game_update', this.handleGameUpdate)
+		this.socket.on('disconnect', this.handleDisconnect)
 	}
 
-	if (command.options) {
-		// if options.customGameSpeed is not defined then do nothing
-		if (!options.customGameSpeed) return
-
-		gameConfig.customGameSpeed = options.customGameSpeed
-		if (gamePhase === Game.Phase.JOINED_LOBBY) {
-			customOptionsSet = false
-			later(100).then(() => {
-				setCustomOptions(gameConfig.customGameSpeed)
-			})
-		} else {
-			log.stderr(`[options] not in lobby`)
-		}
-		return
-	}
-}).then((gameKeyspace: string) => {
-	log.stdout('[Redis] subscribed: ' + gameKeyspace)
-})
-
-redis.subscribeToRecommendations((data: RedisData.Recommendation) => {
-	// TODO: push action to the game
-
-	if (gamePhase !== Game.Phase.PLAYING) {
-		log.stderr(`[recommendation] not in game`)
-		return
-	}
-})
-
-socket.on('connect', async () => {
-	log.stdout(`[connected] ${gameConfig.username}`)
-	if (options.setUsername) {
-		socket.emit('set_username', gameConfig.userId, gameConfig.username)
-		log.debug(`sent: set_username, ${gameConfig.userId}, ${gameConfig.username}`)
-	}
-	redis.sendUpdate({ connected: gameConfig.username })
-})
-
-socket.on('disconnect', async (reason: string) => {
-	// exit if disconnected intentionally; auto-reconnect otherwise
-	await redis.sendUpdate({ disconnected: reason })
-	switch (reason) {
-		case 'io server disconnect':
-			log.stderr("disconnected: " + reason)
-			process.exit(3)
-		case 'io client disconnect':
-			process.exit(0)
-		default:
-			log.stderr("disconnected: " + reason)
-	}
-})
-
-socket.on('error_set_username', (message: string) => {
-	if (message === '')
-		log.stdout(`[set_username] username set to ${gameConfig.username}`)
-	else
-		log.stdout(`[error_set_username] ${message}`)
-})
-
-socket.on('game_start', (data: GeneralsIO.GameStart) => {
-	// Get ready to start playing the game.
-	replay_id = data.replay_id
-	initialized = false
-
-	log.stdout(`[game_start] replay: ${replay_id}, users: ${data.usernames}`)
-	redis.sendUpdate({ game_start: data })
-
-	gameState = new GameState(data)
-
-	// iterate over gameConfig.warCry to send chat messages
-	// send messages at random intervals to appear more human
-	for (let i = 0; i < gameConfig.warCry.length; i++) {
-		later(random(i * 3000, (i + 1) * 3000)).then(() => {
-			socket.emit('chat_message', data.chat_room, gameConfig.warCry[i])
-			log.debug(`sent: [chat_message] ${gameConfig.warCry[i]}`)
+	private initializeRedisConnection = async (redisConfig: Config.Redis) => {
+		this.redis = new Redis(redisConfig)
+		this.redis.subscribeToRecommendations(this.handleRecommendations)
+		await this.redis.subscribeToCommands(this.handleCommand).then((gameKeyspace: string) => {
+			Log.stdout('[Redis] subscribed: ' + gameKeyspace)
 		})
 	}
 
-	gamePhase = Game.Phase.PLAYING
-})
+	private handleCommand = (command: RedisData.Command.Any) => {
+		// control game: join / leave / options
 
-let initialized: boolean = false
-
-socket.on('game_update', (data: GeneralsIO.GameUpdate) => {
-	// update the local game state
-	redis.sendUpdate({ game_update: data })
-	gameState.update(data)
-	redis.sendUpdate({ game_state: gameState })
-	redis.updateGameData(gameState)
-
-	// TODO: publish the new state to redis
-	// TODO: if number of rounds > n * 1000, leave the game
-})
-
-socket.on('game_lost', (data: GeneralsIO.GameLost) => {
-	log.stdout(`[game_lost] ${replay_id}, killer: ${usernames[data.killer]}`)
-	redis.sendUpdate({
-		game_lost: {
-			replay_id: replay_id,
-			killer: data.killer,
-			killer_name: usernames[data.killer]
-		}
-	})
-	leaveGame()
-})
-
-socket.on('game_won', () => {
-	log.stdout(`[game_won] ${replay_id}`)
-	redis.sendUpdate({
-		game_won: {
-			replay_id: replay_id
-		}
-	})
-	leaveGame()
-})
-
-socket.on('queue_update', (data: GeneralsIO.QueueUpdate) => {
-	if (!data.isForcing) {
-		forceStartSet = false
-		setTimeout(setForceStart, 1000)
-	}
-	// if we are the first player in the queue and number of players has changed, set the game speed
-	if (gameType === Game.Type.CUSTOM
-		&& data.usernames[0] === gameConfig.username
-		&& data.numPlayers != queueNumPlayers
-		&& data.options.game_speed != gameConfig.customGameSpeed) {
-		customOptionsSet = false
-		later(100).then(() => {
-			setCustomOptions(gameConfig.customGameSpeed)
-		})
-	}
-	queueNumPlayers = data.numPlayers
-})
-
-function joinGame(data: RedisData.Command.Join) {
-	gameType = data.gameType as Game.Type
-	switch (data.gameType) {
-		case Game.Type.FFA:
-			socket.emit('play', gameConfig.userId)
-			log.stdout('[joined] FFA')
-
-			break
-		case Game.Type.DUEL:
-			socket.emit('join_1v1', gameConfig.userId)
-			log.stdout('[joined] 1v1')
-			break
-		case Game.Type.CUSTOM:
-			if (data.gameId) {
-				gameConfig.customGameId = data.gameId
-			}
-			socket.emit('join_private', data.gameId, gameConfig.userId)
-			setTimeout(setCustomOptions, 100)
-			setTimeout(setForceStart, 2000)
-			log.stdout(`[joined] custom: ${gameConfig.customGameId}`)
-			break
-		default:
-			log.stderr(`[join] invalid gameType: ${data.gameType}`)
+		if (command.join) {
+			this.joinGame(command.join)
 			return
-	}
-	redis.sendUpdate({ joined: data })
-	gamePhase = Game.Phase.JOINED_LOBBY
-}
+		}
 
-function leaveGame() {
-	if (gamePhase == Game.Phase.JOINED_LOBBY) {
-		socket.emit('cancel')
-		log.debug('sent: cancel')
-	} else if (gamePhase == Game.Phase.PLAYING) {
-		socket.emit('leave_game')
-		log.debug('sent: leave_game')
-	} else {
-		log.stderr(`[leaveGame] Invalid Request, Current State: ${gamePhase}`)
-		return
-	}
-	redis.sendUpdate({ left: true })
-	gamePhase = Game.Phase.CONNECTED
-	forceStartSet = false
-	customOptionsSet = false
-}
+		if (command.leave) {
+			if (this.gamePhase === Game.Phase.PLAYING || this.gamePhase === Game.Phase.JOINED_LOBBY) {
+				this.leaveGame()
+			} else {
+				Log.stderr(`[leave] not in a game`)
+			}
+			return
+		}
 
-function setForceStart() {
-	// use mutex to ensure that we only set force start once
-	if (!forceStartSet) {
-		forceStartSet = true
-		socket.emit('set_force_start', gameConfig.customGameId, true)
-		log.debug('sent: set_force_start')
-	}
-}
+		if (command.options) {
+			// if options.customGameSpeed is not defined then do nothing
+			if (!command.options.customGameSpeed) return
 
-// TODO: only call this function for gameType = custom
-function setCustomOptions(customGameSpeed: number) {
-	// use mutex to ensure that we only set custom options once
-	if (!customOptionsSet) {
-		customOptionsSet = true
-		socket.emit('set_custom_options', gameConfig.customGameId, {
-			"game_speed": gameConfig.customGameSpeed
+			this.gameConfig.customGameSpeed = command.options.customGameSpeed
+			if (this.gamePhase === Game.Phase.JOINED_LOBBY) {
+				this.customOptionsSet = false
+				later(100).then(() => {
+					this.setCustomOptions(this.gameConfig.customGameSpeed)
+				})
+			} else {
+				Log.stderr(`[options] not in lobby`)
+			}
+			return
+		}
+
+		if (command.forceStart) {
+			this.forceStartSet = false
+			setTimeout(this.setForceStart, 200)
+			return
+		}
+	}
+
+	private handleRecommendations = (data: RedisData.Recommendation) => {
+		// TODO: push action to the game
+
+		if (this.gamePhase !== Game.Phase.PLAYING) {
+			Log.stderr(`[recommendation] not in game`)
+			return
+		}
+	}
+
+	private handleConnect = () => {
+		Log.stdout(`[connected] ${this.gameConfig.username}`)
+		this.redis.sendUpdate({ connected: this.gameConfig.username })
+		if (this.gameConfig.setUsername) {
+			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
+			Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
+		}
+	}
+
+	private handleDisconnect = (reason: string) => {
+		// exit if disconnected intentionally; auto-reconnect otherwise
+		this.redis.sendUpdate({ disconnected: reason })
+		switch (reason) {
+			case 'io server disconnect':
+				Log.stderr("disconnected: " + reason)
+				process.exit(3)
+			case 'io client disconnect':
+				process.exit(0)
+			default:
+				Log.stderr("disconnected: " + reason)
+		}
+	}
+
+	private handleErrorSetUsername = (message: string) => {
+		if (message === '') {
+			// success
+			Log.stdout(`[set_username] username set to ${this.gameConfig.username}`)
+			return
+		}
+		Log.stdout(`[error_set_username] ${message}`)
+	}
+
+	private handleGameStart = (data: GeneralsIO.GameStart) => {
+		// Get ready to start playing the game.
+		this.replay_id = data.replay_id
+		this.initialized = false
+
+		Log.stdout(`[game_start] replay: ${this.replay_id}, users: ${data.usernames}`)
+		this.redis.sendUpdate({ game_start: data })
+
+		this.gameState = new GameState(data)
+
+		// iterate over gameConfig.warCry to send chat messages
+		// send messages at random intervals to appear more human
+		for (let i = 0; i < this.gameConfig.warCry.length; i++) {
+			later(random(i * 3000, (i + 1) * 3000)).then(() => {
+				this.socket.emit('chat_message', data.chat_room, this.gameConfig.warCry[i])
+				Log.debug(`sent: [chat_message] ${this.gameConfig.warCry[i]}`)
+			})
+		}
+
+		this.gamePhase = Game.Phase.PLAYING
+	}
+
+	private handleGameUpdate = (data: GeneralsIO.GameUpdate) => {
+		if (data.turn > this.gameConfig.MAX_TURNS) {
+			Log.stdout(`[game_update] ${this.replay_id}, turn: ${data.turn}, max turns reached`)
+			this.leaveGame()
+			return
+		}
+
+		// update the local game state
+		this.redis.sendUpdate({ game_update: data })
+		this.gameState.update(data)
+		this.redis.sendUpdate({ game_state: this.gameState })
+
+
+		// TODO: updateGameData fails due to invalid argument type
+		// this.redis.updateGameData(this.gameState)
+	}
+
+	private handleGameLost = (data: GeneralsIO.GameLost) => {
+		Log.stdout(`[game_lost] ${this.replay_id}, killer: ${this.gameState.usernames[data.killer]}`)
+		this.redis.sendUpdate({
+			game_lost: {
+				replay_id: this.replay_id,
+				killer: data.killer,
+				killer_name: this.gameState.usernames[data.killer]
+			}
 		})
-		log.debug('sent: set_custom_options')
+		this.leaveGame()
+	}
+
+	private handleGameWon = () => {
+		Log.stdout(`[game_won] ${this.replay_id}`)
+		this.redis.sendUpdate({
+			game_won: {
+				replay_id: this.replay_id
+			}
+		})
+		this.leaveGame()
+	}
+
+	private handleQueueUpdate = (data: GeneralsIO.QueueUpdate) => {
+		if (!data.isForcing) {
+			this.forceStartSet = false
+			setTimeout(this.setForceStart, 1000)
+		}
+		// if we are the first player in the queue and number of players has changed, set the game speed
+		if (this.gameType === Game.Type.CUSTOM
+			&& data.usernames[0] === this.gameConfig.username
+			&& data.numPlayers != this.queueNumPlayers
+			&& data.options.game_speed != this.gameConfig.customGameSpeed) {
+			this.customOptionsSet = false
+			later(100).then(() => {
+				this.setCustomOptions(this.gameConfig.customGameSpeed)
+			})
+		}
+		this.queueNumPlayers = data.numPlayers
+	}
+
+	private joinGame = (data: RedisData.Command.Join) => {
+		this.gameType = data.gameType as Game.Type
+		switch (data.gameType) {
+			case Game.Type.FFA:
+				this.socket.emit('play', this.gameConfig.userId)
+				Log.stdout('[joined] FFA')
+
+				break
+			case Game.Type.DUEL:
+				this.socket.emit('join_1v1', this.gameConfig.userId)
+				Log.stdout('[joined] 1v1')
+				break
+			case Game.Type.CUSTOM:
+				if (data.gameId) {
+					this.gameConfig.customGameId = data.gameId
+				}
+				this.socket.emit('join_private', data.gameId, this.gameConfig.userId)
+				setTimeout(this.setCustomOptions, 100)
+				setTimeout(this.setForceStart, 2000)
+				Log.stdout(`[joined] custom: ${this.gameConfig.customGameId}`)
+				break
+			default:
+				Log.stderr(`[join] invalid gameType: ${data.gameType}`)
+				return
+		}
+		this.redis.sendUpdate({ joined: data })
+		this.gamePhase = Game.Phase.JOINED_LOBBY
+	}
+
+	private leaveGame = () => {
+		if (this.gamePhase == Game.Phase.JOINED_LOBBY) {
+			this.socket.emit('cancel')
+			Log.debug('sent: cancel')
+		} else if (this.gamePhase == Game.Phase.PLAYING) {
+			this.socket.emit('leave_game')
+			Log.debug('sent: leave_game')
+		} else {
+			Log.stderr(`[leaveGame] Invalid Request, Current State: ${this.gamePhase}`)
+			return
+		}
+		this.redis.sendUpdate({ left: true })
+		this.gamePhase = Game.Phase.CONNECTED
+		this.forceStartSet = false
+		this.customOptionsSet = false
+	}
+
+	private setForceStart = () => {
+		// use mutex to ensure that we only set force start once
+		if (!this.forceStartSet) {
+			this.forceStartSet = true
+			this.socket.emit('set_force_start', this.gameConfig.customGameId, true)
+			Log.debug('sent: set_force_start')
+		}
+	}
+
+	private setCustomOptions = (customGameSpeed: number) => {
+		// use mutex to ensure that we only set custom options once
+		if (this.gameType != Game.Type.CUSTOM) return
+		if (!this.customOptionsSet) {
+			this.customOptionsSet = true
+			this.socket.emit('set_custom_options', this.gameConfig.customGameId, {
+				"game_speed": this.gameConfig.customGameSpeed
+			})
+			Log.debug('sent: set_custom_options')
+		}
+	}
+
+	public quit = async () => {
+		Log.stdout('quitting')
+		switch (this.gamePhase) {
+			case Game.Phase.JOINED_LOBBY:
+			case Game.Phase.PLAYING:
+				this.socket.emit('leave_game')
+				Log.debug('sent: leave_game')
+		}
+		await this.socket.disconnect()
+		this.redis.quit()
 	}
 }

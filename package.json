@@ -2,7 +2,7 @@
   "name": "sergeant-socket",
   "version": "1",
   "description": "a modular generals.io bot that implements advanced learning techniques",
-  "main": "app.js",
+  "main": "out/index.js",
   "type": "module",
   "dependencies": {
     "code42day-binary-heap": "^2.2.0",
@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "start": "node out/app.js"
+    "start": "node ."
   },
   "repository": {
     "type": "git",
