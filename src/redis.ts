@@ -1,6 +1,7 @@
 import { createClient } from 'redis'
-import { Log } from './utils'
-import { GameState } from './gameState'
+import { Log } from './utils.js'
+import { GameState } from './gameState.js'
+import { RedisClientType } from 'redis'
 
 enum KEYS {
 	TURN = 'turn',
@@ -29,13 +30,14 @@ enum CHANNEL {
 }
 
 export class Redis {
-	private publisher
-	private redisSubscriber
+	private publisher: RedisClientType
+	private redisSubscriber: RedisClientType
+	private CHANNEL_PREFIX: string
 	private gameKeyspace: string
 	private gameStarted: boolean = false
 
-	constructor(redisConfig, gameConfig) {
-
+	constructor(redisConfig: Config.Redis) {
+		this.CHANNEL_PREFIX = redisConfig.CHANNEL_PREFIX
 		this.redisSubscriber = createClient({
 			url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
 			socket: {
@@ -57,18 +59,21 @@ export class Redis {
 		this.publisher.connect()
 	}
 
-	public async sendUpdate(data: RedisData.State) {
-		return this.publisher.publish(`{BOT_CLASS}-{gameConfig.botId}-{CHANNEL.STATE}`, JSON.stringify(data))
+	public sendUpdate(data: RedisData.State) {
+		return this.publisher.publish(this.CHANNEL_PREFIX + CHANNEL.STATE, JSON.stringify(data))
 	}
 
-	public async createKeyspace(gameStart: GeneralsIO.GameStart) {
-		this.gameKeyspace = `{BOT_CLASS}-{gameConfig.botId}-${gameStart.replay_id}`
-		this.publisher.json.set(this.gameKeyspace, "$", gameStart)
+	public createGameKeyspace(gameStart: GeneralsIO.GameStart): Promise<string> {
+		this.gameKeyspace = `{BOT_CLASS}-{this.botId}-${gameStart.replay_id}`
 		this.gameStarted = false
+		// @ts-ignore GameStart translates to RedisJSON but TypeScript doesn't know that
+		let promise: Promise = this.publisher.json.set(this.gameKeyspace, "$", gameStart)
+		// return the promise that resolves with `gameKeyspace`
+		return promise.then(() => this.gameKeyspace)
 	}
 
-	public async setKeys(gameState: GameState) {
-		if(!this.gameStarted){
+	public updateGameData(gameState: GameState) {
+		if (!this.gameStarted) {
 			this.gameStarted = true
 			this.publisher.json.set(this.gameKeyspace, KEYS.WIDTH, gameState.width)
 			this.publisher.json.set(this.gameKeyspace, KEYS.HEIGHT, gameState.height)
@@ -86,26 +91,29 @@ export class Redis {
 		// redisClient.json.set(this.gameKeyspace, KEYS.ENEMY_TILES, gameState.enemyTiles)
 	}
 
-	public async expireKeyspace() {
-		const ONE_DAY = 60 * 60 * 24
-		this.publisher.expire(this.gameKeyspace, ONE_DAY)
+	public expireKeyspace(timeInSeconds: number) {
+		return this.publisher.expire(this.gameKeyspace, timeInSeconds)
 	}
 
-	public async subscribeToCommands(callback: (data: RedisData.Command) => void) {
-		this.redisSubscriber.subscribe(`{BOT_CLASS}-{gameConfig.botId}-{CHANNEL.COMMAND}`, (channel: string, message: string) => {
-			let data: RedisData.Command
+	public subscribeToCommands(callback: (data: RedisData.Command.Any) => void) {
+		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + CHANNEL.COMMAND
+		let handleCommand = (message: string, channel: string) => {
+			let data: RedisData.Command.Any
 			try {
 				data = JSON.parse(message)
 			} catch (error) {
-				Log.stderr(`[JSON] {error}`)
+				Log.stderr('[JSON] received:', message, ', error:', error)
 				return
 			}
 			callback(data)
-		})
+		}
+		let promise: Promise<void> = this.redisSubscriber.subscribe(CHANNEL_NAME, handleCommand)
+		return promise.then(() => CHANNEL_NAME)
 	}
 
-	public async subscribeToRecommendations(callback: (data: RedisData.Recommendation) => void) {
-		this.redisSubscriber.subscribe(`{BOT_CLASS}-{gameConfig.botId}-{CHANNEL.RECOMMENDATION}`, (channel: string, message: string) => {
+	public subscribeToRecommendations(callback: (data: RedisData.Recommendation) => void) {
+		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + CHANNEL.RECOMMENDATION
+		let handleRecommendation = (message: string, channel: string) => {
 			let data: RedisData.Recommendation
 			try {
 				data = JSON.parse(message)
@@ -114,10 +122,12 @@ export class Redis {
 				return
 			}
 			callback(data)
-		})
+		}
+		let promise: Promise<void> = this.redisSubscriber.subscribe(CHANNEL_NAME, handleRecommendation)
+		return promise.then(() => CHANNEL_NAME)
 	}
 
-	public async quit() {
+	public quit() {
 		this.redisSubscriber.quit()
 		return this.publisher.quit()
 	}
