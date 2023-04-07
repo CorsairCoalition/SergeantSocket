@@ -1,10 +1,3 @@
-// interface Log {
-// 	stdout: (msg: string) => void,
-// 	stderr: (msg: string) => void,
-// 	debug: (msg: string) => void,
-// 	redis: (channel: REDIS_CHANNEL, msgObj: object) => void,
-// }
-
 export function later(delay: number) {
 	return new Promise(function (resolve) {
 		setTimeout(resolve, delay)
@@ -23,17 +16,17 @@ export class Log {
 		Log.debugEnabled = debug
 	}
 
-	static stdout (msg: string) {
-		console.log(new Date().toISOString(), msg)
+	static stdout (...args: string[]) {
+		console.log(new Date().toISOString(), args.join(' '))
 	}
 
-	static stderr (msg: string) {
-		console.error(new Date().toISOString(), msg)
+	static stderr (...args: string[]) {
+		console.error(new Date().toISOString(), args.join(' '))
 	}
 
-	static debug(msg: string) {
+	static debug(...args: string[]) {
 		if (Log.debugEnabled)
-			console.error(new Date().toISOString(), msg)
+			console.error(new Date().toISOString(), args.join(' '))
 	}
 
 }
