@@ -20,6 +20,8 @@ enum KEYS {
 	ARMIES = 'armies',
 	ENEMY_GENERAL = 'enemyGeneral',
 	OWN_GENERAL = 'ownGeneral',
+	OWN_TILES = 'ownTiles',
+	ENEMY_TILES = 'enemyTiles',
 }
 
 enum CHANNEL {
@@ -27,26 +29,28 @@ enum CHANNEL {
 	STATE = 'state',
 	ACTION = 'action',
 	RECOMMENDATION = 'recommendation',
+	DECONFLICT = 'deconflict',
 }
 
 export class Redis {
 	private publisher: RedisClientType
-	private redisSubscriber: RedisClientType
+	private subscriber: RedisClientType
 	private CHANNEL_PREFIX: string
 	private gameKeyspace: string
 	private gameStarted: boolean = false
+	private deconflicted = false
 
 	constructor(redisConfig: Config.Redis) {
 		this.CHANNEL_PREFIX = redisConfig.CHANNEL_PREFIX
-		this.redisSubscriber = createClient({
+		this.subscriber = createClient({
 			url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
 			socket: {
 				tls: true,
 				servername: redisConfig.HOST,
 			}
 		})
-		this.redisSubscriber.on('error', (error: Error) => Log.stderr(`[Redis] {error}`))
-		this.redisSubscriber.connect()
+		this.subscriber.on('error', (error: Error) => Log.stderr(`[Redis] {error}`))
+		this.subscriber.connect()
 
 		this.publisher = createClient({
 			url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
@@ -55,8 +59,42 @@ export class Redis {
 				servername: redisConfig.HOST,
 			}
 		})
-		this.publisher.on('error', (error: Error) => Log.stderr(`[Redis] {error}`))
+		this.publisher.on('error', (error: Error) => Log.stderr(`[Redis] ${error}`))
 		this.publisher.connect()
+	}
+
+	// deconflict with Redis pub/sub to ensure globally unique botId
+	public deconflict() {
+		// ensure this function is only called once
+		if (this.deconflicted) return
+		this.deconflicted = true
+
+		let CHANNEL_NAME = this.CHANNEL_PREFIX + CHANNEL.DECONFLICT
+		enum MESSAGE {
+			PING = "ping",
+			PONG = "pong",
+		}
+		let countResponses = 0
+		let startPing = Date.now()
+		this.subscriber.subscribe(CHANNEL_NAME, (message: string) => {
+			if (message === MESSAGE.PING) {
+				this.publisher.publish(CHANNEL_NAME, MESSAGE.PONG)
+			}
+			else if (message === MESSAGE.PONG) {
+				countResponses++
+				if (countResponses === 2) {
+					let ping = Date.now() - startPing
+					// if we get a second response within 10 seconds, someone else is on the same channel
+					if (ping < 10000) {
+						// display error message and exit
+						Log.stderr("Deconfliction failed. Select a unique userId and try again.")
+						process.exit(15)
+					}
+				}
+			}
+		}).then(() => {
+			this.publisher.publish(CHANNEL_NAME, "ping")
+		})
 	}
 
 	public sendUpdate(data: RedisData.State) {
@@ -87,8 +125,10 @@ export class Redis {
 		this.publisher.json.set(this.gameKeyspace, KEYS.ARMIES, gameState.armies)
 		this.publisher.json.set(this.gameKeyspace, KEYS.ENEMY_GENERAL, gameState.enemyGeneral)
 		this.publisher.json.set(this.gameKeyspace, KEYS.TURN, gameState.turn)
-		// redisClient.json.set(this.gameKeyspace, KEYS.OWN_TILES, gameState.ownTiles)
-		// redisClient.json.set(this.gameKeyspace, KEYS.ENEMY_TILES, gameState.enemyTiles)
+		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
+		this.publisher.json.set(this.gameKeyspace, KEYS.OWN_TILES, gameState.ownTiles)
+		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
+		this.publisher.json.set(this.gameKeyspace, KEYS.ENEMY_TILES, gameState.enemyTiles)
 	}
 
 	public expireKeyspace(timeInSeconds: number) {
@@ -107,7 +147,7 @@ export class Redis {
 			}
 			callback(data)
 		}
-		let promise: Promise<void> = this.redisSubscriber.subscribe(CHANNEL_NAME, handleCommand)
+		let promise: Promise<void> = this.subscriber.subscribe(CHANNEL_NAME, handleCommand)
 		return promise.then(() => CHANNEL_NAME)
 	}
 
@@ -118,17 +158,17 @@ export class Redis {
 			try {
 				data = JSON.parse(message)
 			} catch (error) {
-				Log.stderr(`[JSON] {error}`)
+				Log.stderr('[JSON] received:', message, ', error:', error)
 				return
 			}
 			callback(data)
 		}
-		let promise: Promise<void> = this.redisSubscriber.subscribe(CHANNEL_NAME, handleRecommendation)
+		let promise: Promise<void> = this.subscriber.subscribe(CHANNEL_NAME, handleRecommendation)
 		return promise.then(() => CHANNEL_NAME)
 	}
 
 	public quit() {
-		this.redisSubscriber.quit()
+		this.subscriber.quit()
 		return this.publisher.quit()
 	}
 }
