@@ -73,7 +73,7 @@ declare namespace GeneralsIO {
 	interface Attack {
 		start: number
 		end: number
-		is50: boolean
+		is50?: boolean
 	}
 }
 

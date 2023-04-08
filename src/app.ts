@@ -110,7 +110,7 @@ export class App {
 
 	private handleConnect = () => {
 		Log.stdout(`[connected] ${this.gameConfig.username}`)
-		this.redis.sendUpdate({ connected: this.gameConfig.username })
+		this.redis.sendStateUpdate({ connected: this.gameConfig.username })
 		if (this.gameConfig.setUsername) {
 			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
 			Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
@@ -119,7 +119,7 @@ export class App {
 
 	private handleDisconnect = (reason: string) => {
 		// exit if disconnected intentionally; auto-reconnect otherwise
-		this.redis.sendUpdate({ disconnected: reason })
+		this.redis.sendStateUpdate({ disconnected: reason })
 		switch (reason) {
 			case 'io server disconnect':
 				Log.stderr("disconnected: " + reason)
@@ -146,7 +146,7 @@ export class App {
 		this.initialized = false
 
 		Log.stdout(`[game_start] replay: ${this.replay_id}, users: ${data.usernames}`)
-		this.redis.sendUpdate({ game_start: data })
+		this.redis.sendStateUpdate({ game_start: data })
 
 		this.gameState = new GameState(data)
 		this.redis.createGameKeyspace(data)
@@ -171,14 +171,14 @@ export class App {
 		}
 
 		// update the local game state
-		this.redis.sendUpdate({ game_update: data })
+		this.redis.sendGameUpdate(data)
 		this.gameState.update(data)
 		this.redis.updateGameData(this.gameState)
 	}
 
 	private handleGameLost = (data: GeneralsIO.GameLost) => {
 		Log.stdout(`[game_lost] ${this.replay_id}, killer: ${this.gameState.usernames[data.killer]}`)
-		this.redis.sendUpdate({
+		this.redis.sendStateUpdate({
 			game_lost: {
 				replay_id: this.replay_id,
 				killer: data.killer,
@@ -190,7 +190,7 @@ export class App {
 
 	private handleGameWon = () => {
 		Log.stdout(`[game_won] ${this.replay_id}`)
-		this.redis.sendUpdate({
+		this.redis.sendStateUpdate({
 			game_won: {
 				replay_id: this.replay_id
 			}
@@ -241,7 +241,7 @@ export class App {
 				Log.stderr(`[join] invalid gameType: ${data.gameType}`)
 				return
 		}
-		this.redis.sendUpdate({ joined: data })
+		this.redis.sendStateUpdate({ joined: data })
 		this.gamePhase = Game.Phase.JOINED_LOBBY
 	}
 
@@ -256,7 +256,7 @@ export class App {
 			Log.stderr(`[leaveGame] Invalid Request, Current State: ${this.gamePhase}`)
 			return
 		}
-		this.redis.sendUpdate({ left: true })
+		this.redis.sendStateUpdate({ left: true })
 		this.gamePhase = Game.Phase.CONNECTED
 		this.forceStartSet = false
 		this.customOptionsSet = false

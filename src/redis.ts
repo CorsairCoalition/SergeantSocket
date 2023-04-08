@@ -28,6 +28,7 @@ enum KEY {
 enum CHANNEL {
 	COMMAND = 'command',
 	STATE = 'state',
+	GAME_UPDATE = 'gameUpdate',
 	ACTION = 'action',
 	RECOMMENDATION = 'recommendation',
 	DECONFLICT = 'deconflict',
@@ -129,8 +130,12 @@ export class Redis {
 		})
 	}
 
-	public sendUpdate(data: RedisData.State) {
+	public sendStateUpdate(data: RedisData.State) {
 		return this.publisher.publish(this.CHANNEL_PREFIX + '-' + CHANNEL.STATE, JSON.stringify(data))
+	}
+
+	public sendGameUpdate(data: GeneralsIO.GameUpdate) {
+		return this.publisher.publish(this.CHANNEL_PREFIX + '-' + CHANNEL.GAME_UPDATE, JSON.stringify(data))
 	}
 
 	public async createGameKeyspace(gameStart: GeneralsIO.GameStart) {

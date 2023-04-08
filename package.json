@@ -6,10 +6,8 @@
   "type": "module",
   "dependencies": {
     "@redis/client": "^1.5.6",
-    "code42day-binary-heap": "^2.2.0",
     "commander": "^10.0.0",
-    "socket.io-client": "^2.5.0",
-    "tinyqueue": "^2.0.3"
+    "socket.io-client": "^2.5.0"
   },
   "devDependencies": {
     "@types/node": "^18.15.5",
@@ -22,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aadityabhatia/sergeant-socket.git"
+    "url": "git+https://github.com/CorsairCoalition/SergeantSocket"
   },
   "keywords": [
     "generals.io",
@@ -33,5 +31,5 @@
   ],
   "author": "Aaditya Bhatia",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/aadityabhatia/sergeant-socket#readme"
+  "homepage": "https://github.com/CorsairCoalition/SergeantSocket#readme"
 }
