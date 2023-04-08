@@ -100,11 +100,20 @@ export class App {
 	}
 
 	private handleRecommendations = (data: RedisData.Recommendation) => {
-		// TODO: push action to the game
-
 		if (this.gamePhase !== Game.Phase.PLAYING) {
 			Log.stderr(`[recommendation] not in game`)
 			return
+		}
+
+		Log.stdout("[recommendation]", JSON.stringify(data))
+
+		if (data.interrupt) {
+			this.socket.emit('clear_moves')
+		}
+
+		for (let i = 0; i < data.actions.length; i++) {
+			const action: GeneralsIO.Attack = data.actions[i]
+			this.socket.emit('attack', action.start, action.end, action.is50)
 		}
 	}
 
