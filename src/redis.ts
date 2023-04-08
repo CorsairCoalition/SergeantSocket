@@ -66,23 +66,29 @@ export class Redis {
 	}
 
 	public setGameKeys(keyValues: Record<string, any>) {
-		// append the gameKeyspace to each key and JSON.stringify each value
-		let keyValueList: Record<string, any> = {}
+		// JSON.stringify each value
 		for (let key in keyValues) {
-			keyValueList[this.gameKeyspace + '-' + key] = JSON.stringify(keyValues[key])
+			keyValues[key] = JSON.stringify(keyValues[key])
 		}
-
-		return this.publisher.mSet(keyValueList)
+		return this.publisher.hSet(this.gameKeyspace, keyValues)
 	}
 
 	public async getGameKeys(...keys: Array<string>) {
-		// append the gameKeyspace to each key
-		let keyList = keys.map(key => this.gameKeyspace + '-' + key)
-
 		// JSON.parse each value
-		return this.publisher.mGet(keyList).then((values: Array<string>) => {
-			return values.map(value => JSON.parse(value))
-		})
+		let values = await this.publisher.hmGet(this.gameKeyspace, keys)
+		for (let key in values) {
+			values[key] = JSON.parse(values[key])
+		}
+		return values
+	}
+
+	public async getAllGameKeys() {
+		// JSON.parse each value
+		let values = await this.publisher.hGetAll(this.gameKeyspace)
+		for (let key in values) {
+			values[key] = JSON.parse(values[key])
+		}
+		return values
 	}
 
 	// deconflict with Redis pub/sub to ensure globally unique botId
