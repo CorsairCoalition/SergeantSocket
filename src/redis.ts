@@ -1,9 +1,10 @@
-import { createClient } from 'redis'
+/// <reference path="./app.d.ts" />
+
+import { createClient, RedisClientType } from '@redis/client'
 import { Log } from './utils.js'
 import { GameState } from './gameState.js'
-import { RedisClientType } from 'redis'
 
-enum KEYS {
+enum KEY {
 	TURN = 'turn',
 	MAP = 'map',
 	WIDTH = 'width',
@@ -33,6 +34,7 @@ enum CHANNEL {
 }
 
 export class Redis {
+
 	private publisher: RedisClientType
 	private subscriber: RedisClientType
 	private CHANNEL_PREFIX: string
@@ -69,7 +71,7 @@ export class Redis {
 		if (this.deconflicted) return
 		this.deconflicted = true
 
-		let CHANNEL_NAME = this.CHANNEL_PREFIX + CHANNEL.DECONFLICT
+		let CHANNEL_NAME = this.CHANNEL_PREFIX + '-' + CHANNEL.DECONFLICT
 		enum MESSAGE {
 			PING = "ping",
 			PONG = "pong",
@@ -98,37 +100,36 @@ export class Redis {
 	}
 
 	public sendUpdate(data: RedisData.State) {
-		return this.publisher.publish(this.CHANNEL_PREFIX + CHANNEL.STATE, JSON.stringify(data))
+		return this.publisher.publish(this.CHANNEL_PREFIX + '-' + CHANNEL.STATE, JSON.stringify(data))
 	}
 
-	public createGameKeyspace(gameStart: GeneralsIO.GameStart): Promise<string> {
-		this.gameKeyspace = `{BOT_CLASS}-{this.botId}-${gameStart.replay_id}`
+	public createGameKeyspace(gameStart: GeneralsIO.GameStart) {
+		this.gameKeyspace = `${this.CHANNEL_PREFIX}-${gameStart.replay_id}`
 		this.gameStarted = false
-		// @ts-ignore GameStart translates to RedisJSON but TypeScript doesn't know that
-		let promise: Promise = this.publisher.json.set(this.gameKeyspace, "$", gameStart)
+
 		// return the promise that resolves with `gameKeyspace`
-		return promise.then(() => this.gameKeyspace)
+		// return promise.then(() => { this.expireKeyspace(60 * 60 * 24) }).then(() => this.gameKeyspace)
 	}
 
 	public updateGameData(gameState: GameState) {
 		if (!this.gameStarted) {
 			this.gameStarted = true
-			this.publisher.json.set(this.gameKeyspace, KEYS.WIDTH, gameState.width)
-			this.publisher.json.set(this.gameKeyspace, KEYS.HEIGHT, gameState.height)
-			this.publisher.json.set(this.gameKeyspace, KEYS.SIZE, gameState.size)
-			this.publisher.json.set(this.gameKeyspace, KEYS.OWN_GENERAL, gameState.ownGeneral)
+			this.publisher.set(this.gameKeyspace + '-' + KEY.WIDTH, gameState.width)
+			this.publisher.set(this.gameKeyspace + '-' + KEY.HEIGHT, gameState.height)
+			this.publisher.set(this.gameKeyspace + '-' + KEY.SIZE, gameState.size)
+			this.publisher.set(this.gameKeyspace + '-' + KEY.OWN_GENERAL, gameState.ownGeneral)
 		}
 
-		this.publisher.json.set(this.gameKeyspace, KEYS.CITIES, gameState.cities)
-		this.publisher.json.set(this.gameKeyspace, KEYS.MAP, gameState.map)
-		this.publisher.json.set(this.gameKeyspace, KEYS.DISCOVERED_TILES, gameState.discoveredTiles)
-		this.publisher.json.set(this.gameKeyspace, KEYS.ARMIES, gameState.armies)
-		this.publisher.json.set(this.gameKeyspace, KEYS.ENEMY_GENERAL, gameState.enemyGeneral)
-		this.publisher.json.set(this.gameKeyspace, KEYS.TURN, gameState.turn)
+		// this.publisher.set(this.gameKeyspace + '-' + KEY.CITIES, gameState.cities)
+		// this.publisher.set(this.gameKeyspace + '-' + KEY.MAP, gameState.map)
+		// this.publisher.set(this.gameKeyspace + '-' + KEY.DISCOVERED_TILES, gameState.discoveredTiles)
+		// this.publisher.set(this.gameKeyspace + '-' + KEY.ARMIES, gameState.armies)
+		this.publisher.set(this.gameKeyspace + '-' + KEY.ENEMY_GENERAL, gameState.enemyGeneral)
+		this.publisher.set(this.gameKeyspace + '-' + KEY.TURN, gameState.turn)
 		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
-		this.publisher.json.set(this.gameKeyspace, KEYS.OWN_TILES, gameState.ownTiles)
+		this.publisher.set(this.gameKeyspace + '-' + KEY.OWN_TILES, gameState.ownTiles)
 		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
-		this.publisher.json.set(this.gameKeyspace, KEYS.ENEMY_TILES, gameState.enemyTiles)
+		this.publisher.set(this.gameKeyspace + '-' + KEY.ENEMY_TILES, gameState.enemyTiles)
 	}
 
 	public expireKeyspace(timeInSeconds: number) {
@@ -136,7 +137,7 @@ export class Redis {
 	}
 
 	public subscribeToCommands(callback: (data: RedisData.Command.Any) => void) {
-		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + CHANNEL.COMMAND
+		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + '-' + CHANNEL.COMMAND
 		let handleCommand = (message: string, channel: string) => {
 			let data: RedisData.Command.Any
 			try {
@@ -152,7 +153,7 @@ export class Redis {
 	}
 
 	public subscribeToRecommendations(callback: (data: RedisData.Recommendation) => void) {
-		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + CHANNEL.RECOMMENDATION
+		const CHANNEL_NAME: string = this.CHANNEL_PREFIX + '-' + CHANNEL.RECOMMENDATION
 		let handleRecommendation = (message: string, channel: string) => {
 			let data: RedisData.Recommendation
 			try {

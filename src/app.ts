@@ -24,7 +24,7 @@ export class App {
 	constructor(gameConfig: Config.Game, redisConfig: Config.Redis) {
 		// create a unique botId by hashing gameConfig.userId
 		this.botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
-		redisConfig.CHANNEL_PREFIX = gameConfig.BOT_CLASS + '-' + this.botId + '-'
+		redisConfig.CHANNEL_PREFIX = gameConfig.BOT_CLASS + '-' + this.botId
 		this.gameConfig = gameConfig
 
 		this.initializeSocketConnection()
