@@ -98,6 +98,9 @@ declare namespace RedisData {
 	}
 
 	interface Recommendation {
+		recommender: string
+		confidence: number
+		priority: number
 		interrupt: boolean
 		actions: Attack[]
 	}
