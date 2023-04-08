@@ -53,8 +53,8 @@ export class App {
 
 	private initializeRedisConnection = async (redisConfig: Config.Redis) => {
 		this.redis = new Redis(redisConfig)
-		this.redis.subscribeToRecommendations(this.handleRecommendations)
-		await this.redis.subscribeToCommands(this.handleCommand).then((gameKeyspace: string) => {
+		this.redis.subscribe(RedisData.CHANNEL.RECOMMENDATION, this.handleRecommendations)
+		await this.redis.subscribe(RedisData.CHANNEL.COMMAND, this.handleCommand).then((gameKeyspace: string) => {
 			Log.stdout('[Redis] subscribed: ' + gameKeyspace)
 		})
 	}
@@ -119,7 +119,7 @@ export class App {
 
 	private handleConnect = () => {
 		Log.stdout(`[connected] ${this.gameConfig.username}`)
-		this.redis.sendStateUpdate({ connected: this.gameConfig.username })
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
 		if (this.gameConfig.setUsername) {
 			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
 			Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
@@ -128,7 +128,7 @@ export class App {
 
 	private handleDisconnect = (reason: string) => {
 		// exit if disconnected intentionally; auto-reconnect otherwise
-		this.redis.sendStateUpdate({ disconnected: reason })
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { disconnected: reason })
 		switch (reason) {
 			case 'io server disconnect':
 				Log.stderr("disconnected: " + reason)
@@ -155,7 +155,7 @@ export class App {
 		this.initialized = false
 
 		Log.stdout(`[game_start] replay: ${this.replay_id}, users: ${data.usernames}`)
-		this.redis.sendStateUpdate({ game_start: data })
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { game_start: data })
 
 		this.gameState = new GameState(data)
 		this.redis.createGameKeyspace(data)
@@ -172,7 +172,7 @@ export class App {
 		this.gamePhase = Game.Phase.PLAYING
 	}
 
-	private handleGameUpdate = (data: GeneralsIO.GameUpdate) => {
+	private handleGameUpdate = async (data: GeneralsIO.GameUpdate) => {
 		if (data.turn > this.gameConfig.MAX_TURNS) {
 			Log.stdout(`[game_update] ${this.replay_id}, turn: ${data.turn}, max turns reached`)
 			this.leaveGame()
@@ -180,14 +180,15 @@ export class App {
 		}
 
 		// update the local game state
-		this.redis.sendGameUpdate(data)
+		this.redis.sendUpdate(RedisData.CHANNEL.GAME_UPDATE, data)
 		this.gameState.update(data)
-		this.redis.updateGameData(this.gameState)
+		await this.redis.updateGameData(this.gameState)
+		return this.redis.sendUpdate(RedisData.CHANNEL.TURN, data.turn)
 	}
 
 	private handleGameLost = (data: GeneralsIO.GameLost) => {
 		Log.stdout(`[game_lost] ${this.replay_id}, killer: ${this.gameState.usernames[data.killer]}`)
-		this.redis.sendStateUpdate({
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, {
 			game_lost: {
 				replay_id: this.replay_id,
 				killer: data.killer,
@@ -199,7 +200,7 @@ export class App {
 
 	private handleGameWon = () => {
 		Log.stdout(`[game_won] ${this.replay_id}`)
-		this.redis.sendStateUpdate({
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, {
 			game_won: {
 				replay_id: this.replay_id
 			}
@@ -250,7 +251,7 @@ export class App {
 				Log.stderr(`[join] invalid gameType: ${data.gameType}`)
 				return
 		}
-		this.redis.sendStateUpdate({ joined: data })
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { joined: data })
 		this.gamePhase = Game.Phase.JOINED_LOBBY
 	}
 
@@ -265,7 +266,7 @@ export class App {
 			Log.stderr(`[leaveGame] Invalid Request, Current State: ${this.gamePhase}`)
 			return
 		}
-		this.redis.sendStateUpdate({ left: true })
+		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { left: true })
 		this.gamePhase = Game.Phase.CONNECTED
 		this.forceStartSet = false
 		this.customOptionsSet = false
