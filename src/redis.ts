@@ -65,6 +65,26 @@ export class Redis {
 		this.publisher.connect()
 	}
 
+	public setGameKeys(keyValues: Record<string, any>) {
+		// append the gameKeyspace to each key and JSON.stringify each value
+		let keyValueList: Record<string, any> = {}
+		for (let key in keyValues) {
+			keyValueList[this.gameKeyspace + '-' + key] = JSON.stringify(keyValues[key])
+		}
+
+		return this.publisher.mSet(keyValueList)
+	}
+
+	public async getGameKeys(...keys: Array<string>) {
+		// append the gameKeyspace to each key
+		let keyList = keys.map(key => this.gameKeyspace + '-' + key)
+
+		// JSON.parse each value
+		return this.publisher.mGet(keyList).then((values: Array<string>) => {
+			return values.map(value => JSON.parse(value))
+		})
+	}
+
 	// deconflict with Redis pub/sub to ensure globally unique botId
 	public deconflict() {
 		// ensure this function is only called once
