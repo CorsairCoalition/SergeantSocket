@@ -91,6 +91,10 @@ export class Redis {
 		return values
 	}
 
+	public expireKeyspace(timeInSeconds: number) {
+		return this.publisher.expire(this.gameKeyspace, timeInSeconds)
+	}
+
 	// deconflict with Redis pub/sub to ensure globally unique botId
 	public deconflict() {
 		// ensure this function is only called once
@@ -129,37 +133,34 @@ export class Redis {
 		return this.publisher.publish(this.CHANNEL_PREFIX + '-' + CHANNEL.STATE, JSON.stringify(data))
 	}
 
-	public createGameKeyspace(gameStart: GeneralsIO.GameStart) {
+	public async createGameKeyspace(gameStart: GeneralsIO.GameStart) {
 		this.gameKeyspace = `${this.CHANNEL_PREFIX}-${gameStart.replay_id}`
 		this.gameStarted = false
-
-		// return the promise that resolves with `gameKeyspace`
-		// return promise.then(() => { this.expireKeyspace(60 * 60 * 24) }).then(() => this.gameKeyspace)
+		await this.setGameKeys(gameStart)
+		await this.expireKeyspace(60 * 60 * 24)
+		return this.gameKeyspace
 	}
 
 	public updateGameData(gameState: GameState) {
 		if (!this.gameStarted) {
 			this.gameStarted = true
-			this.publisher.set(this.gameKeyspace + '-' + KEY.WIDTH, gameState.width)
-			this.publisher.set(this.gameKeyspace + '-' + KEY.HEIGHT, gameState.height)
-			this.publisher.set(this.gameKeyspace + '-' + KEY.SIZE, gameState.size)
-			this.publisher.set(this.gameKeyspace + '-' + KEY.OWN_GENERAL, gameState.ownGeneral)
+			this.setGameKeys({
+				[KEY.WIDTH]: gameState.width,
+				[KEY.HEIGHT]: gameState.height,
+				[KEY.SIZE]: gameState.size,
+				[KEY.OWN_GENERAL]: gameState.ownGeneral,
+			})
 		}
-
-		// this.publisher.set(this.gameKeyspace + '-' + KEY.CITIES, gameState.cities)
-		// this.publisher.set(this.gameKeyspace + '-' + KEY.MAP, gameState.map)
-		// this.publisher.set(this.gameKeyspace + '-' + KEY.DISCOVERED_TILES, gameState.discoveredTiles)
-		// this.publisher.set(this.gameKeyspace + '-' + KEY.ARMIES, gameState.armies)
-		this.publisher.set(this.gameKeyspace + '-' + KEY.ENEMY_GENERAL, gameState.enemyGeneral)
-		this.publisher.set(this.gameKeyspace + '-' + KEY.TURN, gameState.turn)
-		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
-		this.publisher.set(this.gameKeyspace + '-' + KEY.OWN_TILES, gameState.ownTiles)
-		// @ts-ignore Solve this if the following type does not work; otherwise ignore.
-		this.publisher.set(this.gameKeyspace + '-' + KEY.ENEMY_TILES, gameState.enemyTiles)
-	}
-
-	public expireKeyspace(timeInSeconds: number) {
-		return this.publisher.expire(this.gameKeyspace, timeInSeconds)
+		return this.setGameKeys({
+			[KEY.TURN]: gameState.turn,
+			[KEY.CITIES]: gameState.cities,
+			[KEY.MAP]: gameState.map,
+			[KEY.DISCOVERED_TILES]: gameState.discoveredTiles,
+			[KEY.ARMIES]: gameState.armies,
+			[KEY.ENEMY_GENERAL]: gameState.enemyGeneral,
+			[KEY.OWN_TILES]: gameState.ownTiles,
+			[KEY.ENEMY_TILES]: gameState.enemyTiles,
+		})
 	}
 
 	public subscribeToCommands(callback: (data: RedisData.Command.Any) => void) {

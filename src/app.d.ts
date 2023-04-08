@@ -36,6 +36,8 @@ declare namespace GeneralsIO {
 		team_chat_room: string
 		usernames: string[]
 		teams: number[]
+		game_type: Game.Type
+
 	}
 
 	interface GameUpdate {

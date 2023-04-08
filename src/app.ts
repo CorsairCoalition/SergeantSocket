@@ -149,6 +149,7 @@ export class App {
 		this.redis.sendUpdate({ game_start: data })
 
 		this.gameState = new GameState(data)
+		this.redis.createGameKeyspace(data)
 
 		// iterate over gameConfig.warCry to send chat messages
 		// send messages at random intervals to appear more human
@@ -172,11 +173,7 @@ export class App {
 		// update the local game state
 		this.redis.sendUpdate({ game_update: data })
 		this.gameState.update(data)
-		this.redis.sendUpdate({ game_state: this.gameState })
-
-
-		// TODO: updateGameData fails due to invalid argument type
-		// this.redis.updateGameData(this.gameState)
+		this.redis.updateGameData(this.gameState)
 	}
 
 	private handleGameLost = (data: GeneralsIO.GameLost) => {
