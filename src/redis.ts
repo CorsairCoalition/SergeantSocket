@@ -125,12 +125,12 @@ export class Redis {
 		return this.setGameKeys({
 			[RedisData.KEY.TURN]: gameState.turn,
 			[RedisData.KEY.CITIES]: gameState.cities,
-			[RedisData.KEY.MAP]: gameState.map,
 			[RedisData.KEY.DISCOVERED_TILES]: gameState.discoveredTiles,
 			[RedisData.KEY.ARMIES]: gameState.armies,
+			[RedisData.KEY.TERRAIN]: gameState.terrain,
 			[RedisData.KEY.ENEMY_GENERAL]: gameState.enemyGeneral,
-			[RedisData.KEY.OWN_TILES]: gameState.ownTiles,
-			[RedisData.KEY.ENEMY_TILES]: gameState.enemyTiles,
+			[RedisData.KEY.OWN_TILES]: Array.from(gameState.ownTiles.entries()),
+			[RedisData.KEY.ENEMY_TILES]: Array.from(gameState.enemyTiles.entries()),
 		})
 	}
 
