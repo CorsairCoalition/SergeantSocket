@@ -62,6 +62,8 @@ export class App {
 	private handleCommand = (command: RedisData.Command.Any) => {
 		// control game: join / leave / options
 
+		Log.stdout(`[command] ${JSON.stringify(command)}`)
+
 		if (command.join) {
 			this.joinGame(command.join)
 			return
@@ -105,7 +107,7 @@ export class App {
 			return
 		}
 
-		Log.stdout("[recommendation]", JSON.stringify(data))
+		Log.debug("[recommendation]", JSON.stringify(data))
 
 		if (data.interrupt) {
 			this.socket.emit('clear_moves')

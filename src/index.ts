@@ -30,10 +30,8 @@ Log.setDebugOutput(options.debug)
 
 // debug output
 Log.debug("[debug] debugging enabled")
-Log.debug("[debug] gameConfig: ")
-Log.debugObject(gameConfig)
-Log.debug("[debug] options: ")
-Log.debugObject(options)
+Log.debugObject('Game configuration', gameConfig)
+Log.debugObject('Command Line Options', options)
 
 // start the application to initiate redis and socket connections
 let app = new App(gameConfig, redisConfig)
