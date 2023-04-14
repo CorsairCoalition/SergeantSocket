@@ -6,20 +6,24 @@ import { Log, later, random } from './utils.js'
 import { Redis } from './redis.js'
 import crypto from 'crypto'
 
+enum MESSAGE {
+	PING = "ping",
+	PONG = "pong",
+}
+
 export class App {
 	public botId: string
 	private gamePhase: Game.Phase = Game.Phase.INITIALIZING
 	private gameType: Game.Type
 	private gameState: GameState
 	private replay_id: string = ""
-	private usernames: string[]
 	private queueNumPlayers: number = 0
 	private forceStartSet: boolean = false
 	private customOptionsSet: boolean = false
 	private redis: Redis
 	private gameConfig: Config.Game
-	private initialized: boolean = false
 	private socket: any
+	private deconflicted: boolean = false
 
 	constructor(gameConfig: Config.Game, redisConfig: Config.Redis) {
 		// create a unique botId by hashing gameConfig.userId
@@ -29,9 +33,8 @@ export class App {
 
 		this.initializeSocketConnection()
 		this.initializeRedisConnection(redisConfig).then(() => {
-			this.redis.deconflict()
+			this.deconflict()
 		})
-
 	}
 
 	private initializeSocketConnection = () => {
@@ -121,7 +124,7 @@ export class App {
 
 	private handleConnect = () => {
 		Log.stdout(`[connected] ${this.gameConfig.username}`)
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
+		this.redis.publish(RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
 		if (this.gameConfig.setUsername) {
 			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
 			Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
@@ -130,7 +133,7 @@ export class App {
 
 	private handleDisconnect = (reason: string) => {
 		// exit if disconnected intentionally; auto-reconnect otherwise
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { disconnected: reason })
+		this.redis.publish(RedisData.CHANNEL.STATE, { disconnected: reason })
 		switch (reason) {
 			case 'io server disconnect':
 				Log.stderr("disconnected: " + reason)
@@ -151,16 +154,18 @@ export class App {
 		Log.stdout(`[error_set_username] ${message}`)
 	}
 
-	private handleGameStart = (data: GeneralsIO.GameStart) => {
+	private handleGameStart = async (data: GeneralsIO.GameStart) => {
 		// Get ready to start playing the game.
 		this.replay_id = data.replay_id
-		this.initialized = false
 
 		Log.stdout(`[game_start] replay: ${this.replay_id}, users: ${data.usernames}`)
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { game_start: data })
+		this.redis.publish(RedisData.CHANNEL.STATE, { game_start: data })
 
 		this.gameState = new GameState(data)
-		this.redis.createGameKeyspace(data)
+		this.redis.setKeyspaceName(this.replay_id)
+		await this.redis.setKeys(data)
+		this.redis.expireKeyspace(60 * 60 * 24)
+
 
 		// iterate over gameConfig.warCry to send chat messages
 		// send messages at random intervals to appear more human
@@ -182,10 +187,30 @@ export class App {
 		}
 
 		// update the local game state
-		this.redis.sendUpdate(RedisData.CHANNEL.GAME_UPDATE, data)
+		this.redis.publish(RedisData.CHANNEL.GAME_UPDATE, data)
 		this.gameState.update(data)
-		await this.redis.updateGameData(this.gameState)
-		return this.redis.sendUpdate(RedisData.CHANNEL.TURN, {
+
+		if (data.turn === 1) {
+			await this.redis.setKeys({
+				[RedisData.KEY.WIDTH]: this.gameState.width,
+				[RedisData.KEY.HEIGHT]: this.gameState.height,
+				[RedisData.KEY.SIZE]: this.gameState.size,
+				[RedisData.KEY.OWN_GENERAL]: this.gameState.ownGeneral,
+			})
+		}
+
+		await this.redis.setKeys({
+			[RedisData.KEY.TURN]: this.gameState.turn,
+			[RedisData.KEY.CITIES]: this.gameState.cities,
+			[RedisData.KEY.DISCOVERED_TILES]: this.gameState.discoveredTiles,
+			[RedisData.KEY.ARMIES]: this.gameState.armies,
+			[RedisData.KEY.TERRAIN]: this.gameState.terrain,
+			[RedisData.KEY.ENEMY_GENERAL]: this.gameState.enemyGeneral,
+			[RedisData.KEY.OWN_TILES]: Array.from(this.gameState.ownTiles.entries()),
+			[RedisData.KEY.ENEMY_TILES]: Array.from(this.gameState.enemyTiles.entries()),
+		})
+
+		return this.redis.publish(RedisData.CHANNEL.TURN, {
 			turn: data.turn,
 			replay_id: this.replay_id
 		})
@@ -193,7 +218,7 @@ export class App {
 
 	private handleGameLost = (data: GeneralsIO.GameLost) => {
 		Log.stdout(`[game_lost] ${this.replay_id}, killer: ${this.gameState.usernames[data.killer]}`)
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, {
+		this.redis.publish(RedisData.CHANNEL.STATE, {
 			game_lost: {
 				replay_id: this.replay_id,
 				killer: data.killer,
@@ -205,7 +230,7 @@ export class App {
 
 	private handleGameWon = () => {
 		Log.stdout(`[game_won] ${this.replay_id}`)
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, {
+		this.redis.publish(RedisData.CHANNEL.STATE, {
 			game_won: {
 				replay_id: this.replay_id
 			}
@@ -256,7 +281,7 @@ export class App {
 				Log.stderr(`[join] invalid gameType: ${data.gameType}`)
 				return
 		}
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { joined: data })
+		this.redis.publish(RedisData.CHANNEL.STATE, { joined: data })
 		this.gamePhase = Game.Phase.JOINED_LOBBY
 	}
 
@@ -271,7 +296,7 @@ export class App {
 			Log.stderr(`[leaveGame] Invalid Request, Current State: ${this.gamePhase}`)
 			return
 		}
-		this.redis.sendUpdate(RedisData.CHANNEL.STATE, { left: true })
+		this.redis.publish(RedisData.CHANNEL.STATE, { left: true })
 		this.gamePhase = Game.Phase.CONNECTED
 		this.forceStartSet = false
 		this.customOptionsSet = false
@@ -296,6 +321,34 @@ export class App {
 			})
 			Log.debug('sent: set_custom_options')
 		}
+	}
+
+	private deconflict = async () => {
+		// ensure this function is only called once
+		if (this.deconflicted) return
+		this.deconflicted = true
+
+		let countResponses = 0
+		let startPing = Date.now()
+
+		let handlePing = (message: string) => {
+			if (message === MESSAGE.PING) {
+				this.redis.publish(RedisData.CHANNEL.DECONFLICT, MESSAGE.PONG)
+			}
+			else if (message === MESSAGE.PONG) {
+				countResponses++
+				let ping = Date.now() - startPing
+				if (countResponses === 2 && ping < 10000) {
+					// if we get a second response within 10 seconds, someone else is on the same channel
+					// display error message and exit
+					Log.stderr("Redis channel conflict. Select a unique userId and try again.")
+					process.exit(4)
+				}
+			}
+		}
+
+		await this.redis.subscribe(RedisData.CHANNEL.DECONFLICT, handlePing)
+		this.redis.publish(RedisData.CHANNEL.DECONFLICT, MESSAGE.PING)
 	}
 
 	public quit = async () => {
