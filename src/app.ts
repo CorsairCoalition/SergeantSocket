@@ -24,6 +24,7 @@ export class App {
 	private gameConfig: Config.Game
 	private socket: any
 	private deconflicted: boolean = false
+	private moveCount: number = 0
 
 	constructor(gameConfig: Config.Game, redisConfig: Config.Redis) {
 		// create a unique botId by hashing gameConfig.userId
@@ -119,6 +120,7 @@ export class App {
 		for (let i = 0; i < data.actions.length; i++) {
 			const action: GeneralsIO.Attack = data.actions[i]
 			this.socket.emit('attack', action.start, action.end, action.is50)
+			this.moveCount++
 		}
 	}
 
@@ -157,6 +159,7 @@ export class App {
 	private handleGameStart = async (data: GeneralsIO.GameStart) => {
 		// Get ready to start playing the game.
 		this.replay_id = data.replay_id
+		this.moveCount = 0
 
 		Log.stdout(`[game_start] replay: ${this.replay_id}, users: ${data.usernames}`)
 		this.redis.publish(RedisData.CHANNEL.STATE, { game_start: data })
@@ -209,6 +212,18 @@ export class App {
 			[RedisData.KEY.OWN_TILES]: Array.from(this.gameState.ownTiles.entries()),
 			[RedisData.KEY.ENEMY_TILES]: Array.from(this.gameState.enemyTiles.entries()),
 		})
+
+		let maxArmyOnTile = 0
+		// get the max value from this.gameState.ownTiles
+		for (let [key, value] of this.gameState.ownTiles) {
+			if (value > maxArmyOnTile) {
+				maxArmyOnTile = value
+			}
+		}
+
+		this.redis.listPush(RedisData.LIST.SCORES, data.scores)
+		this.redis.listPush(RedisData.LIST.MAX_ARMY_ON_TILE, maxArmyOnTile)
+		this.redis.listPush(RedisData.LIST.MOVE_COUNT, this.moveCount)
 
 		return this.redis.publish(RedisData.CHANNEL.TURN, {
 			turn: data.turn,

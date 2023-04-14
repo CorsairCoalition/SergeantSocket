@@ -34,6 +34,11 @@ export class Redis {
 		this.publisher.connect()
 	}
 
+	public listPush(list: RedisData.LIST, data: any) {
+		this.publisher.rPush(this.gameKeyspace + '-' + list, JSON.stringify(data))
+		this.publisher.expire(this.gameKeyspace + '-' + list, 60 * 60 * 24)
+	}
+
 	public setKeys(keyValues: Record<string, any>) {
 		// JSON.stringify each value
 		for (let key in keyValues) {

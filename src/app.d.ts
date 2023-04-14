@@ -162,6 +162,12 @@ declare namespace RedisData {
 		ENEMY_TILES = 'enemyTiles',
 		DISCOVERED_TILES = 'discoveredTiles',
 	}
+
+	const enum LIST {
+		SCORES = 'scores',
+		MAX_ARMY_ON_TILE = 'maxArmyOnTile',
+		MOVE_COUNT = 'moveCount',
+	}
 }
 
 declare namespace Config {
