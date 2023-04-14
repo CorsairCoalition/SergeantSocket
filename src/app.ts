@@ -185,7 +185,10 @@ export class App {
 		this.redis.sendUpdate(RedisData.CHANNEL.GAME_UPDATE, data)
 		this.gameState.update(data)
 		await this.redis.updateGameData(this.gameState)
-		return this.redis.sendUpdate(RedisData.CHANNEL.TURN, data.turn)
+		return this.redis.sendUpdate(RedisData.CHANNEL.TURN, {
+			turn: data.turn,
+			replay_id: this.replay_id
+		})
 	}
 
 	private handleGameLost = (data: GeneralsIO.GameLost) => {
