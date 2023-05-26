@@ -157,6 +157,7 @@ export class App {
 
 	private handleConnect = () => {
 		Log.stdout(`[connected] ${this.gameConfig.username}`)
+		Log.stdout(`READY TO PLAY`)
 		this.gamePhase = Game.Phase.CONNECTED
 		this.redis.publish(RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
 		if (this.gameConfig.setUsername) {
