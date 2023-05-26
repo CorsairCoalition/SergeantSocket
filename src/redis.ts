@@ -45,6 +45,11 @@ export class Redis {
 		this.publisher.expire(this.gameKeyspace + '-' + list, 60 * 60 * 24 * 365)
 	}
 
+	public listPushReplays(data: string) {
+		this.publisher.rPush(this.CHANNEL_PREFIX + '-replays', JSON.stringify(data))
+		this.publisher.expire(this.gameKeyspace + '-replays', 60 * 60 * 24 * 365)
+	}
+
 	public setKeys(keyValues: Record<string, any>) {
 		// JSON.stringify each value
 		for (let key in keyValues) {

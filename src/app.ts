@@ -202,6 +202,7 @@ export class App {
 		this.redis.setKeys(data)
 		this.redis.expireKeyspace(60 * 60 * 24 * 365)
 
+		this.redis.listPushReplays(this.replay_id)
 
 		// iterate over gameConfig.warCry to send chat messages
 		// send messages at random intervals to appear more human
