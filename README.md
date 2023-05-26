@@ -16,5 +16,5 @@ Copy `config.json.example` to `config.json` and enter your Redis configuration.
 ## Usage
 
 ```
-node app
+node . config.json
 ```

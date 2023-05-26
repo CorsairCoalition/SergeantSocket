@@ -45,7 +45,7 @@ declare namespace GeneralsIO {
 		map_diff: number[]
 		cities_diff: number[]
 		generals: number[]
-		scores: object[]
+		scores: Score[]
 		stars: number[]
 	}
 
@@ -68,6 +68,14 @@ declare namespace GeneralsIO {
 	interface StarsRanks {
 		duel?: number
 		ffa?: number
+	}
+
+	interface Score {
+		"total": number
+		"tiles": number
+		"i": number
+		"color": number
+		"dead": boolean
 	}
 
 	interface Attack {
@@ -107,10 +115,17 @@ declare namespace RedisData {
 			leave?: boolean
 			forceStart?: boolean
 			options?: Options
+			status?: boolean
 		}
 	}
 
+	interface Action {
+		interrupt: boolean
+		actions: Attack[]
+	}
+
 	interface Recommendation {
+		date: Date
 		recommender: string
 		confidence: number
 		priority: number
@@ -122,7 +137,6 @@ declare namespace RedisData {
 		connected?: string
 		disconnected?: string
 		game_start?: GeneralsIO.GameStart
-		game_state?: GameState
 		game_lost?: GeneralsIO.GameLost
 		game_won?: GeneralsIO.GameWon
 		joined?: {
@@ -130,6 +144,7 @@ declare namespace RedisData {
 			gameId?: string
 		}
 		left?: boolean
+		playing?: boolean
 	}
 
 	const enum CHANNEL {
@@ -140,6 +155,7 @@ declare namespace RedisData {
 		RECOMMENDATION = 'recommendation',
 		DECONFLICT = 'deconflict',
 		TURN = 'turn',
+		DISCOVERY = 'discovery',
 	}
 
 	const enum KEY {
@@ -172,9 +188,9 @@ declare namespace RedisData {
 
 declare namespace Config {
 	interface Game {
-		BOT_CLASS: string
 		GAME_SERVER_URL: string
 		MAX_TURNS: number
+		BOT_ID_PREFIX: string
 		userId: string
 		username: string
 		setUsername: boolean
@@ -188,6 +204,8 @@ declare namespace Config {
 		PORT: number
 		USERNAME: string
 		PASSWORD: string
+		TLS: boolean
 		CHANNEL_PREFIX: string
+		EXPIRATION_TIME: number
 	}
 }

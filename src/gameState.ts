@@ -1,7 +1,6 @@
 /// <reference path="./app.d.ts" />
 
 import { patch } from './gameUtils.js'
-import { Log } from './utils.js'
 
 export class GameState {
 	playerIndex: number

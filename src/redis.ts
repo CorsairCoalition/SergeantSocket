@@ -9,25 +9,31 @@ export class Redis {
 	private subscriber: RedisClientType
 	private CHANNEL_PREFIX: string
 	private gameKeyspace: string
-	private deconflicted = false
 
 	constructor(redisConfig: Config.Redis) {
+		Log.debug(`[Redis] Initializing Redis: ${process.env['REDIS_HOST']}`)
 		this.CHANNEL_PREFIX = redisConfig.CHANNEL_PREFIX
 		this.subscriber = createClient({
-			url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
+			username: process.env['REDIS_USERNAME'] || redisConfig.USERNAME,
+			password: process.env['REDIS_PASSWORD'] || redisConfig.PASSWORD,
 			socket: {
-				tls: true,
-				servername: redisConfig.HOST,
+				host: process.env['REDIS_HOST'] || redisConfig.HOST,
+				port: redisConfig.PORT,
+				tls: redisConfig.TLS,
+				servername: process.env['REDIS_HOST'] || redisConfig.HOST,
 			}
 		})
-		this.subscriber.on('error', (error: Error) => Log.stderr(`[Redis] {error}`))
+		this.subscriber.on('error', (error: Error) => Log.stderr(`[Redis] ${error}`))
 		this.subscriber.connect()
 
 		this.publisher = createClient({
-			url: `rediss://${redisConfig.USERNAME}:${redisConfig.PASSWORD}@${redisConfig.HOST}:${redisConfig.PORT}`,
+			username: process.env['REDIS_USERNAME'] || redisConfig.USERNAME,
+			password: process.env['REDIS_PASSWORD'] || redisConfig.PASSWORD,
 			socket: {
-				tls: true,
-				servername: redisConfig.HOST,
+				host: process.env['REDIS_HOST'] || redisConfig.HOST,
+				port: redisConfig.PORT,
+				tls: redisConfig.TLS,
+				servername: process.env['REDIS_HOST'] || redisConfig.HOST,
 			}
 		})
 		this.publisher.on('error', (error: Error) => Log.stderr(`[Redis] ${error}`))
@@ -36,7 +42,7 @@ export class Redis {
 
 	public listPush(list: RedisData.LIST, data: any) {
 		this.publisher.rPush(this.gameKeyspace + '-' + list, JSON.stringify(data))
-		this.publisher.expire(this.gameKeyspace + '-' + list, 60 * 60 * 24)
+		this.publisher.expire(this.gameKeyspace + '-' + list, 60 * 60 * 24 * 365)
 	}
 
 	public setKeys(keyValues: Record<string, any>) {
@@ -96,7 +102,17 @@ export class Redis {
 	}
 
 	public quit() {
-		this.subscriber.quit()
-		return this.publisher.quit()
+		let promises = []
+		if (this.subscriber.isReady) {
+			Log.stdout('Closing Redis subscriber...')
+			promises.push(this.subscriber.quit())
+		}
+		if (this.publisher.isReady) {
+			Log.stdout('Closing Redis publisher...')
+			promises.push(this.publisher.quit())
+		}
+		return Promise.all(promises).then(() => {
+			Log.stdout('Redis connection closed.')
+		})
 	}
 }

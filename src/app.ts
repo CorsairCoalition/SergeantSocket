@@ -12,7 +12,13 @@ enum MESSAGE {
 }
 
 export class App {
-	public botId: string
+	// immutable objects
+	public readonly botId: string
+	private readonly gameConfig: Config.Game
+	private redis: Redis
+	private socket: any
+
+	// game state variables
 	private gamePhase: Game.Phase = Game.Phase.INITIALIZING
 	private gameType: Game.Type
 	private gameState: GameState
@@ -20,16 +26,13 @@ export class App {
 	private queueNumPlayers: number = 0
 	private forceStartSet: boolean = false
 	private customOptionsSet: boolean = false
-	private redis: Redis
-	private gameConfig: Config.Game
-	private socket: any
 	private deconflicted: boolean = false
 	private moveCount: number = 0
 
 	constructor(gameConfig: Config.Game, redisConfig: Config.Redis) {
 		// create a unique botId by hashing gameConfig.userId
-		this.botId = crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
-		redisConfig.CHANNEL_PREFIX = gameConfig.BOT_CLASS + '-' + this.botId
+		this.botId = gameConfig.BOT_ID_PREFIX + '-' + crypto.createHash('sha256').update(gameConfig.userId).digest('base64').replace(/[^\w\s]/gi, '').slice(-7)
+		redisConfig.CHANNEL_PREFIX = this.botId
 		this.gameConfig = gameConfig
 
 		this.initializeSocketConnection()
@@ -44,8 +47,8 @@ export class App {
 			transports: ['websocket']
 		})
 		this.socket.on('connect', this.handleConnect)
-		this.socket.on("error", (error: Error) => Log.stderr(`[socket.io] {error}`))
-		this.socket.on("connect_error", (error: Error) => Log.stderr(`[socket.io] {error}`))
+		this.socket.on("error", (error: Error) => Log.stderr(`[socket.io] ${error}`))
+		this.socket.on("connect_error", (error: Error) => Log.stderr(`[socket.io] ${error}`))
 		this.socket.on('error_set_username', this.handleErrorSetUsername)
 		this.socket.on('queue_update', this.handleQueueUpdate)
 		this.socket.on('game_start', this.handleGameStart)
@@ -90,7 +93,7 @@ export class App {
 			if (this.gamePhase === Game.Phase.JOINED_LOBBY) {
 				this.customOptionsSet = false
 				later(100).then(() => {
-					this.setCustomOptions(this.gameConfig.customGameSpeed)
+					this.setCustomOptions()
 				})
 			} else {
 				Log.stderr(`[options] not in lobby`)
@@ -126,6 +129,7 @@ export class App {
 
 	private handleConnect = () => {
 		Log.stdout(`[connected] ${this.gameConfig.username}`)
+		this.gamePhase = Game.Phase.CONNECTED
 		this.redis.publish(RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
 		if (this.gameConfig.setUsername) {
 			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
@@ -135,6 +139,7 @@ export class App {
 
 	private handleDisconnect = (reason: string) => {
 		// exit if disconnected intentionally; auto-reconnect otherwise
+		this.gamePhase = Game.Phase.INITIALIZING
 		this.redis.publish(RedisData.CHANNEL.STATE, { disconnected: reason })
 		switch (reason) {
 			case 'io server disconnect':
@@ -166,8 +171,8 @@ export class App {
 
 		this.gameState = new GameState(data)
 		this.redis.setKeyspaceName(this.replay_id)
-		await this.redis.setKeys(data)
-		this.redis.expireKeyspace(60 * 60 * 24)
+		this.redis.setKeys(data)
+		this.redis.expireKeyspace(60 * 60 * 24 * 365)
 
 
 		// iterate over gameConfig.warCry to send chat messages
@@ -186,7 +191,7 @@ export class App {
 		if (data.turn > this.gameConfig.MAX_TURNS) {
 			Log.stdout(`[game_update] ${this.replay_id}, turn: ${data.turn}, max turns reached`)
 			this.leaveGame()
-			return
+			return null
 		}
 
 		// update the local game state
@@ -215,7 +220,7 @@ export class App {
 
 		let maxArmyOnTile = 0
 		// get the max value from this.gameState.ownTiles
-		for (let [key, value] of this.gameState.ownTiles) {
+		for (let [, value] of this.gameState.ownTiles) {
 			if (value > maxArmyOnTile) {
 				maxArmyOnTile = value
 			}
@@ -265,7 +270,7 @@ export class App {
 			&& data.options.game_speed != this.gameConfig.customGameSpeed) {
 			this.customOptionsSet = false
 			later(100).then(() => {
-				this.setCustomOptions(this.gameConfig.customGameSpeed)
+				this.setCustomOptions()
 			})
 		}
 		this.queueNumPlayers = data.numPlayers
@@ -287,7 +292,7 @@ export class App {
 				if (data.gameId) {
 					this.gameConfig.customGameId = data.gameId
 				}
-				this.socket.emit('join_private', data.gameId, this.gameConfig.userId)
+				this.socket.emit('join_private', data.gameId, this.gameConfig.userId, process.env['AUTH_TOKEN'])
 				setTimeout(this.setCustomOptions, 100)
 				setTimeout(this.setForceStart, 2000)
 				Log.stdout(`[joined] custom: ${this.gameConfig.customGameId}`)
@@ -326,7 +331,7 @@ export class App {
 		}
 	}
 
-	private setCustomOptions = (customGameSpeed: number) => {
+	private setCustomOptions = () => {
 		// use mutex to ensure that we only set custom options once
 		if (this.gameType != Game.Type.CUSTOM) return
 		if (!this.customOptionsSet) {
@@ -367,7 +372,6 @@ export class App {
 	}
 
 	public quit = async () => {
-		Log.stdout('quitting')
 		switch (this.gamePhase) {
 			case Game.Phase.JOINED_LOBBY:
 			case Game.Phase.PLAYING:
@@ -375,6 +379,6 @@ export class App {
 				Log.debug('sent: leave_game')
 		}
 		await this.socket.disconnect()
-		this.redis.quit()
+		await this.redis.quit()
 	}
 }
