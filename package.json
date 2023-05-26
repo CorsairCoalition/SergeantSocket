@@ -10,6 +10,7 @@
     "socket.io-client": "^2.5.0"
   },
   "devDependencies": {
+    "@sindresorhus/tsconfig": "^3.0.1",
     "@types/node": "^18.15.5",
     "typescript": "^5.0.2"
   },
