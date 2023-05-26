@@ -60,7 +60,7 @@ export class App {
 
 	private initializeRedisConnection = async (redisConfig: Config.Redis) => {
 		this.redis = new Redis(redisConfig)
-		this.redis.subscribe(RedisData.CHANNEL.RECOMMENDATION, this.handleRecommendations)
+		this.redis.subscribe(RedisData.CHANNEL.ACTION, this.handleAction)
 		await this.redis.subscribe(RedisData.CHANNEL.COMMAND, this.handleCommand).then((gameKeyspace: string) => {
 			Log.stdout('[Redis] subscribed: ' + gameKeyspace)
 		})
@@ -106,19 +106,47 @@ export class App {
 			setTimeout(this.setForceStart, 200)
 			return
 		}
-	}
 
-	private handleRecommendations = (data: RedisData.Recommendation) => {
-		if (this.gamePhase !== Game.Phase.PLAYING) {
-			Log.stderr(`[recommendation] not in game`)
+		if (command.status) {
+			this.redis.publish(RedisData.CHANNEL.STATE, this.getCurrentState())
 			return
 		}
+	}
 
-		Log.debug("[recommendation]", JSON.stringify(data))
+	private getCurrentState = (): RedisData.State => {
+		if (!this.socket.connected) {
+			return { disconnected: 'unknown' }
+		}
+
+		switch (this.gamePhase) {
+			case Game.Phase.INITIALIZING:
+				return { disconnected: 'initializing' }
+			case Game.Phase.CONNECTED:
+				return { connected: this.gameConfig.username }
+			case Game.Phase.JOINED_LOBBY:
+				return {
+					joined: {
+						gameType: this.gameType,
+						gameId: this.gameConfig.customGameId
+					}
+				}
+			case Game.Phase.PLAYING:
+				return { playing: true }
+		}
+	}
+
+	// execute actions from CommanderCortex
+	private handleAction = (data: RedisData.Action) => {
+		if (this.gamePhase !== Game.Phase.PLAYING) {
+			Log.stderr(`[action] not in game`)
+			return
+		}
 
 		if (data.interrupt) {
 			this.socket.emit('clear_moves')
 		}
+
+		Log.debug("[action]", JSON.stringify(data))
 
 		for (let i = 0; i < data.actions.length; i++) {
 			const action: GeneralsIO.Attack = data.actions[i]
