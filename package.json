@@ -7,7 +7,7 @@
   "dependencies": {
     "@redis/client": "^1.5.6",
     "commander": "^10.0.0",
-    "socket.io-client": "^2.5.0"
+    "socket.io-client": "^4.6.2"
   },
   "devDependencies": {
     "@sindresorhus/tsconfig": "^3.0.1",

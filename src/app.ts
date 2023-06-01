@@ -44,7 +44,6 @@ export class App {
 	private initializeSocketConnection = () => {
 		this.socket = io(this.gameConfig.GAME_SERVER_URL, {
 			rejectUnauthorized: false,
-			transports: ['websocket']
 		})
 		this.socket.on('connect', this.handleConnect)
 		this.socket.on("error", (error: Error) => Log.stderr(`[socket.io] ${error}`))
