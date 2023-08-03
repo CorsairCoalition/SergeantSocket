@@ -1,7 +1,9 @@
+#!/usr/bin/env node
+
 import { Command } from 'commander'
-import { Log } from './utils.js'
 import { App } from './app.js'
 import fs from 'node:fs/promises'
+import { Log } from '@corsaircoalition/common'
 
 const packageJsonPath = new URL('../package.json', import.meta.url)
 const pkg = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'))
@@ -30,7 +32,7 @@ async function run(configFile: string) {
 	const redisConfig = config.redisConfig
 	gameConfig.BOT_ID_PREFIX = gameConfig.BOT_ID_PREFIX || 'cortex'
 	gameConfig.setUsername = options['setUsername']
-	Log.setDebugOutput(options['debug'])
+	Log.enableDebugOutput(options['debug'])
 
 	// debug output
 	Log.debug("[debug] debugging enabled")
@@ -42,7 +44,7 @@ async function run(configFile: string) {
 	Log.stdout(`[initilizing] botId: ${app.botId}`)
 }
 
-await program.parseAsync()
+program.parseAsync()
 
 // gracefully exit on SIGINT and SIGTERM
 process.once('SIGINT', async () => {

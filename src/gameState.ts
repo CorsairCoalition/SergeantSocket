@@ -1,5 +1,3 @@
-/// <reference path="./app.d.ts" />
-
 import { patch } from './gameUtils.js'
 
 export class GameState {

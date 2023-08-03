@@ -1,27 +1,35 @@
 {
-  "name": "sergeant-socket",
+  "name": "@corsaircoalition/sergeant-socket",
   "version": "1",
   "description": "a modular generals.io bot that implements advanced learning techniques",
   "main": "out/index.js",
   "type": "module",
   "dependencies": {
-    "@redis/client": "^1.5.6",
-    "commander": "^10.0.0",
-    "socket.io-client": "^4.6.2"
+    "@corsaircoalition/common": "^1.2.0",
+    "commander": "^10.0.1",
+    "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
     "@sindresorhus/tsconfig": "^3.0.1",
-    "@types/node": "^18.15.5",
-    "typescript": "^5.0.2"
+    "@types/node": "^18.17.1",
+    "typescript": "^5.1.6"
   },
+  "bin": "./out/index.js",
+  "files": [
+    "out"
+  ],
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
+    "prepare": "npm run build",
     "start": "node ."
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CorsairCoalition/SergeantSocket"
+    "url": "github:CorsairCoalition/SergeantSocket"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "generals.io",
@@ -32,5 +40,5 @@
   ],
   "author": "Aaditya Bhatia",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/CorsairCoalition/SergeantSocket#readme"
+  "homepage": "https://corsaircoalition.github.io/"
 }
