@@ -11,7 +11,7 @@ npm run build
 
 ## Configuration
 
-Copy `config.json.example` to `config.json` and enter your Redis configuration.
+See `[config.json.example](https://github.com/CorsairCoalition/docs/blob/main/config.json.example)`.
 
 ## Usage
 
