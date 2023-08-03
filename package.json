@@ -1,6 +1,6 @@
 {
   "name": "@corsaircoalition/sergeant-socket",
-  "version": "1",
+  "version": "2.0.0",
   "description": "a modular generals.io bot that implements advanced learning techniques",
   "main": "out/index.js",
   "type": "module",
