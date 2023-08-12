@@ -28,7 +28,7 @@ npx @corsaircoalition/sergeant-socket config.json
 or use docker:
 
 ```sh
-docker run -it ./config.json:/config.json ghcr.io/corsaircoalition/sergeantsocket:latest
+docker run -it -v ./config.json:/config.json ghcr.io/corsaircoalition/sergeantsocket:latest
 ```
 
 ## Usage
