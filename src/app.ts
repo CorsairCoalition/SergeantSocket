@@ -43,6 +43,7 @@ export class App {
 		this.socket.on('connect', this.handleConnect)
 		this.socket.on("error", (error: Error) => Log.stderr(`[socket.io] ${error}`))
 		this.socket.on("connect_error", (error: Error) => Log.stderr(`[socket.io] ${error}`))
+		this.socket.on('gio_error', this.handleGIOError)
 		this.socket.on('error_set_username', this.handleErrorSetUsername)
 		this.socket.on('queue_update', this.handleQueueUpdate)
 		this.socket.on('game_start', this.handleGameStart)
@@ -150,14 +151,24 @@ export class App {
 	}
 
 	private handleConnect = () => {
-		Log.stdout(`[connected] ${this.gameConfig.username}`)
-		Log.stdout(`READY TO PLAY`)
-		this.gamePhase = Game.Phase.CONNECTED
-		Redis.publish(this.botId, RedisData.CHANNEL.STATE, { connected: this.gameConfig.username })
-		if (this.gameConfig.setUsername) {
-			this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
-			Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
-		}
+		Log.stdout(`[connected] ${this.gameConfig.GAME_SERVER_URL}`)
+
+		this.socket.emit('get_username', this.gameConfig.userId, (username: string) => {
+			Log.debug(`recv: username: ${username}`)
+			Log.stdout(`[connected] username: ${username}`)
+			Log.stdout(`READY TO PLAY`)
+			Redis.publish(this.botId, RedisData.CHANNEL.STATE, { connected: username })
+			this.gamePhase = Game.Phase.CONNECTED
+
+			if (username !== this.gameConfig.username) {
+				// attempt to change username; it will take effect next time bot is started
+				Log.stdout(`Changing username to: ${this.gameConfig.username}`)
+				this.socket.emit('set_username', this.gameConfig.userId, this.gameConfig.username)
+				Log.debug(`sent: set_username, ${this.gameConfig.userId}, ${this.gameConfig.username}`)
+			}
+
+			this.gameConfig.username = username
+		})
 	}
 
 	private handleDisconnect = (reason: string) => {
@@ -175,13 +186,25 @@ export class App {
 		}
 	}
 
+	private handleGIOError = (message: string) => {
+		Log.stderr(`[gio_error] ${message}`)
+		process.exit(4)
+	}
+
 	private handleErrorSetUsername = (message: string) => {
+		this.socket.emit('get_username', this.gameConfig.userId, (username: string) => {
+			this.gameConfig.userId = username
+			if (username === null) {
+				Log.stdout(`You do not have a username. You will be called "Anonymous".`)
+			} else {
+				Log.stdout(`Username: ${username}`)
+			}
+		})
 		if (message === '') {
-			// success
-			Log.stdout(`[set_username] username set to ${this.gameConfig.username}`)
-			return
+			Log.stdout(`Username updated! Restart this service to apply the new username.`)
+		} else {
+			Log.stderr(`[error_set_username] ${message}`)
 		}
-		Log.stdout(`[error_set_username] ${message}`)
 	}
 
 	private handleGameStart = async (data: GeneralsIO.GameStart) => {
@@ -408,7 +431,8 @@ export class App {
 				this.socket.emit('leave_game')
 				Log.debug('sent: leave_game')
 		}
-		await this.socket.disconnect()
-		await Redis.quit()
+		this.socket.disconnect().once('disconnect', async () => {
+			await Redis.quit()
+		})
 	}
 }

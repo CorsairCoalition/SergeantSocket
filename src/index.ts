@@ -19,7 +19,6 @@ program
 	.version(pkg.version)
 	.description(pkg.description)
 	.option('-d, --debug', 'enable debugging', false)
-	.option('-s, --set-username', `attempt to set username`, false)
 	.arguments('<configFile>')
 	.showHelpAfterError()
 	.action(run)
@@ -31,7 +30,6 @@ async function run(configFile: string) {
 	const gameConfig = config.gameConfig
 	const redisConfig = config.redisConfig
 	gameConfig.BOT_ID_PREFIX = gameConfig.BOT_ID_PREFIX || 'cortex'
-	gameConfig.setUsername = options['setUsername']
 	Log.enableDebugOutput(options['debug'])
 
 	// debug output

@@ -41,6 +41,5 @@ a modular generals.io bot that implements advanced learning techniques
 Options:
   -V, --version       output the version number
   -d, --debug         enable debugging (default: false)
-  -s, --set-username  attempt to set username (default: false)
   -h, --help          display help for command
 ```
